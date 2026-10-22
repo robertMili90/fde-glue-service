@@ -1,0 +1,15 @@
+# Local credentials and generated state
+.env
+.env.*
+!.env.example
+**/target/
+**/data/
+**/*.mv.db
+**/*.trace.db
+.codegraph/
+**/.codegraph/
+.DS_Store
+.idea/
+*.iml
+.vscode/
+*.log

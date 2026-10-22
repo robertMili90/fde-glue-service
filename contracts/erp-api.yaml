@@ -1,0 +1,245 @@
+openapi: 3.0.3
+info:
+  title: Fictional ERP payment projection API
+  version: 1.0.0
+  description: |
+    Proposed exercise contract. Invoice facts and payment references are owned
+    by the ERP. The glue service writes absolute payment projections.
+    Monetary amounts are integral minor units with explicit currency.
+    Equivalent compatible refinements must be documented and tested.
+servers:
+  - url: http://localhost:8081
+paths:
+  /invoices:
+    get:
+      operationId: listLinkedInvoices
+      summary: Enumerate linked invoices of every financial status
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string}
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 100}
+      responses:
+        '200':
+          description: Stable cursor page; nextCursor is absent on the final page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/Invoice'}
+                  nextCursor: {type: string}
+    post:
+      operationId: createInvoiceFixture
+      summary: Create/link an invoice for the local scenario
+      description: |
+        Create before confirming the Stripe test payment. Reject conflicting
+        duplicate invoice IDs or PaymentIntent associations. This is fixture
+        setup; it is not part of the synchronization worker.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateInvoice'}
+      responses:
+        '201':
+          description: Created in UNPAID state
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Invoice'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /invoices/by-payment/{paymentIntentId}:
+    get:
+      operationId: findInvoiceByPayment
+      parameters:
+        - in: path
+          name: paymentIntentId
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Exactly one linked invoice
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Invoice'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /invoices/{invoiceId}:
+    get:
+      operationId: getInvoice
+      parameters:
+        - {$ref: '#/components/parameters/InvoiceId'}
+      responses:
+        '200':
+          description: Current invoice and financial projection
+          headers:
+            ETag:
+              description: 'Quoted integer invoice version, for example "1".'
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Invoice'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /invoices/{invoiceId}/payment-projection:
+    put:
+      operationId: putPaymentProjection
+      description: |
+        Atomic absolute upsert for the invoice's existing PaymentIntent reference.
+        Store the update and idempotency result in one ERP transaction.
+        If the same key/payload already committed, return its stored result before
+        checking If-Match or applying synthetic faults. Reject the same key with a
+        different payload with 409. Neither case consumes a fault counter.
+        A stale version returns 412 without writing. A current financial mismatch
+        returns 422. Never append another payment merely because a new key arrives.
+      parameters:
+        - {$ref: '#/components/parameters/InvoiceId'}
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 255}
+        - in: header
+          name: If-Match
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PaymentProjection'}
+      responses:
+        '200':
+          description: Committed result or identical replay
+          headers:
+            ETag:
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Invoice'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '412':
+          description: STALE_INVOICE_VERSION; refresh and revalidate before retry
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '422':
+          description: FINANCIAL_CONFLICT; no financial effect
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '503':
+          description: Configured temporary failure before committing
+  /demo/faults:
+    post:
+      operationId: setDemoFault
+      summary: Configure a local simulator fault
+      description: |
+        Affect the next N structurally valid projection requests with unseen keys.
+        Resolve existing-key replay/conflict first; neither consumes fault counters.
+        APPLY_THEN_DELAY commits the update/idempotency result first, then delays
+        the response.
+        VERSION_CONFLICT increments the invoice version before rejecting the
+        incoming write with 412. NONE clears active faults.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mode]
+              properties:
+                mode:
+                  type: string
+                  enum: [NONE, FAIL_BEFORE_WRITE, APPLY_THEN_DELAY, VERSION_CONFLICT]
+                remainingRequests: {type: integer, minimum: 1, default: 1}
+                delayMs: {type: integer, minimum: 0, maximum: 10000}
+      responses:
+        '204': {description: Fault configured}
+  /demo/state:
+    get:
+      operationId: inspectDemoState
+      summary: Inspect local state and counts for failure demonstrations
+      responses:
+        '200':
+          description: Invoice/projection counts and committed update count
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [invoiceCount, paymentProjectionCount, appliedUpdateCount]
+                properties:
+                  invoiceCount: {type: integer, minimum: 0}
+                  paymentProjectionCount: {type: integer, minimum: 0}
+                  appliedUpdateCount: {type: integer, minimum: 0}
+  /demo/reset:
+    post:
+      operationId: resetLocalDemo
+      summary: Clear only this simulator's local data and active fault controls
+      responses:
+        '204': {description: Local simulator reset; does not touch Stripe or glue data}
+components:
+  parameters:
+    InvoiceId:
+      in: path
+      name: invoiceId
+      required: true
+      schema: {type: string, minLength: 1}
+  schemas:
+    CreateInvoice:
+      type: object
+      additionalProperties: false
+      required: [id, expectedAmountMinor, currency, paymentIntentId]
+      properties:
+        id: {type: string, minLength: 1}
+        expectedAmountMinor: {type: integer, format: int64, minimum: 1}
+        currency: {type: string, pattern: '^[A-Z]{3}$'}
+        paymentIntentId: {type: string, pattern: '^pi_'}
+    PaymentProjection:
+      type: object
+      additionalProperties: false
+      required: [paymentIntentId, currency, amountCollectedMinor, amountRefundedMinor, status]
+      properties:
+        paymentIntentId: {type: string, pattern: '^pi_'}
+        currency: {type: string, pattern: '^[A-Z]{3}$'}
+        amountCollectedMinor: {type: integer, format: int64, minimum: 1}
+        amountRefundedMinor: {type: integer, format: int64, minimum: 0}
+        status: {type: string, enum: [PAID, REFUNDED]}
+      description: |
+        Currency and collected amount must match invoice facts. PAID requires
+        zero successful refunded amount; REFUNDED requires refunded amount equal
+        to collected amount. Partial projections are rejected for this slice.
+    Invoice:
+      type: object
+      additionalProperties: false
+      required: [id, expectedAmountMinor, currency, paymentIntentId, version, financialStatus]
+      properties:
+        id: {type: string, minLength: 1}
+        expectedAmountMinor: {type: integer, format: int64, minimum: 1}
+        currency: {type: string, pattern: '^[A-Z]{3}$'}
+        paymentIntentId: {type: string, pattern: '^pi_'}
+        version: {type: integer, format: int64, minimum: 1}
+        financialStatus: {type: string, enum: [UNPAID, PAID, REFUNDED]}
+        paymentProjection: {$ref: '#/components/schemas/PaymentProjection'}
+    Problem:
+      type: object
+      required: [reasonCode, message]
+      properties:
+        reasonCode: {type: string}
+        message: {type: string}
+        invoiceId: {type: string}
+        currentVersion: {type: integer, format: int64}
+  responses:
+    NotFound:
+      description: Invoice/payment association was not found
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    Conflict:
+      description: Conflicting business identity or changed payload for an existing key
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Problem'}

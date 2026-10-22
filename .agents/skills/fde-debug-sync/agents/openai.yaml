@@ -1,0 +1,4 @@
+interface:
+  display_name: "FDE Debug Synchronization"
+  short_description: "Diagnose and fix a synchronization failure"
+  default_prompt: "Use $fde-debug-sync to reproduce and fix a failing synchronization scenario."

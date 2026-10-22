@@ -1,0 +1,6 @@
+{
+  "id": "INV-001",
+  "expectedAmountMinor": 50000,
+  "currency": "RON",
+  "paymentIntentId": "pi_example_001"
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "FDE Implement Slice"
+  short_description: "Implement a verified integration behavior"
+  default_prompt: "Use $fde-implement-slice to implement one acceptance scenario and verify its observable result."

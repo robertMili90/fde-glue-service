@@ -1,0 +1,4 @@
+interface:
+  display_name: "FDE Start Project"
+  short_description: "Bootstrap the agreed FDE service and simulator"
+  default_prompt: "Use $fde-start-project to inspect the handoff and bootstrap the agreed local project."

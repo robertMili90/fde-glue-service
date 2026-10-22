@@ -1,0 +1,7 @@
+{
+  "paymentIntentId": "pi_example_001",
+  "currency": "RON",
+  "amountCollectedMinor": 50000,
+  "amountRefundedMinor": 0,
+  "status": "PAID"
+}

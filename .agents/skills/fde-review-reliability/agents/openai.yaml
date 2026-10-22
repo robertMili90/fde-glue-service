@@ -1,0 +1,4 @@
+interface:
+  display_name: "FDE Review Reliability"
+  short_description: "Review failures, consistency, and recovery"
+  default_prompt: "Use $fde-review-reliability to review the integration against its reliability scenarios."
