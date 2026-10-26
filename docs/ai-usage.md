@@ -279,3 +279,18 @@ errors or skips, including Spotless and Checkstyle. Both staged and working-tree
 `git diff --check` passed with the existing Windows-wrapper line-ending warning.
 No application behavior was changed during commit preparation. No GitHub
 repository creation, push, sub-agents or global configuration changes occurred.
+
+### Public GitHub repository setup — 2026-10-26
+
+The user requested public publication with the original assignment PDF and
+recruiter clarifications included, explicitly outside the FintechOS organization.
+Codex completed the browser-based GitHub CLI authentication flow and verified
+that the authenticated account `robertMili90` has type `User`. It created
+[robertMili90/fde-glue-service](https://github.com/robertMili90/fde-glue-service)
+with that explicit personal owner and verified `isPrivate: false` through GitHub.
+The local bundle remote was preserved as `starter`; `origin` now targets the
+personal GitHub repository. The implementation commit is `081ab88`.
+No application source or test behavior changed during publication setup.
+The earlier commit-preparation verification passed 71 tests and style checks;
+application tests were not rerun for this documentation and Git configuration
+step. No sub-agents or global agent configuration changes were involved.
