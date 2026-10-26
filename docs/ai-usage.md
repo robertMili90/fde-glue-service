@@ -294,3 +294,28 @@ No application source or test behavior changed during publication setup.
 The earlier commit-preparation verification passed 71 tests and style checks;
 application tests were not rerun for this documentation and Git configuration
 step. No sub-agents or global agent configuration changes were involved.
+
+### Postman localhost demo — 2026-10-26
+
+The user requested a localhost Postman collection for demonstrations. Codex read
+the application configuration, HTTP controllers, ERP contract, scenario mapping
+and existing offline/sandbox fixtures, then added 40 requests, a localhost
+environment with an empty signing secret, and an English walkthrough linked from
+README. Generated IDs/ETags support repeatable ERP-only runs; signed sandbox
+notifications preserve duplicate event IDs and sign exact resolved request bytes.
+The manual ERP reset skips execution unless explicitly enabled locally.
+
+Actual verification used `npm exec --yes --package=newman@6.2.1 -- newman` through
+a temporary Python harness, starting both existing executable JARs on temporary
+ports with isolated H2 databases and reusing the existing offline Stripe stub.
+An initial run exposed a collision with the sandbox's built-in CryptoJS identifier;
+the signing script now uses a distinct local name. A reset-guard harness assertion
+was corrected to expect a successfully skipped request rather than a script error.
+The final run passed 35 HTTP requests/54 assertions, checked recorded/duplicate
+receipts and current-fact PAID/REFUNDED convergence, and observed one projection,
+two updates and no unapproved reset. Temporary processes/data were cleaned up.
+JSON parsing, local documentation links and `git diff --check` passed. No real
+Stripe, desktop import, optional mutation-control run or Maven verification was
+performed for these artifact/documentation-only edits. The unrelated existing
+Java working-tree edit was preserved. No sub-agents, push/publish or global agent
+configuration changes were involved.

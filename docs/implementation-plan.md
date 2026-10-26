@@ -254,3 +254,28 @@ explicit remaining limits. Cross-checked all suite rows and coverage counters
 against existing XML evidence. The documented CLI-copy and all three combined-data
 report commands passed; relative links/anchors and git diff --check passed.
 This was a documentation-only change, so application tests were not rerun.
+
+## Postman localhost demo — 2026-10-26
+
+Added a [40-request collection](../postman/fde-localhost.postman_collection.json),
+[localhost environment](../postman/localhost.postman_environment.json) and
+[walkthrough](../postman/README.md). The ERP-only folder demonstrates projections,
+idempotency, version checks and business conflicts without Stripe. Separate folders
+cover signed sandbox notifications, duplicate receipts, work/attempt inspection,
+reconciliation, metrics and manually selected fault controls. Secrets are blank;
+ERP reset requires a local explicit opt-in and otherwise skips the request.
+
+Newman 6.2.1 was executed through npm exec against the existing packaged JARs,
+on temporary localhost ports with separate temporary on-disk databases and the
+existing Python demo's local Stripe stub. The final smoke run passed 35 HTTP
+requests and 54 assertions across folders 00–03 and a second old-success request
+after a stub refund. Additional observations confirmed PAID then REFUNDED with
+one projection/two committed updates, and zero reset requests without opt-in.
+All temporary application/stub processes and databases were cleaned up.
+JSON parsing, local documentation links and `git diff --check` passed.
+
+No real Stripe API/CLI or Postman desktop import was exercised. The optional
+fault/requeue controls and opted-in reset were not executed through this collection.
+Maven was not rerun: these changes affect only Postman artifacts/documentation;
+the smoke used previously built executable JARs. The pre-existing local edit in
+the glue application entry point was left untouched.

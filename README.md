@@ -103,6 +103,15 @@ event object. HTTP tests compare these documents with representative responses.
 Health includes the local database. Flyway owns schema changes; JPA validates the
 schema and Open Session in View is disabled.
 
+## Postman localhost demo
+
+Import the [Postman collection](postman/fde-localhost.postman_collection.json) and
+[localhost environment](postman/localhost.postman_environment.json). The
+[walkthrough](postman/README.md) covers a runnable ERP demo without Stripe, signed
+sandbox notifications, work inspection, reconciliation, metrics and fault controls.
+Run folders individually; the ERP-only folder uses synthetic references and should
+run with glue stopped or a separate ERP database.
+
 ## Optional Stripe sandbox workflow
 
 Configure `STRIPE_SECRET_KEY` from a local test/sandbox environment. Only `sk_test_`

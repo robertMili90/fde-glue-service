@@ -1,0 +1,1311 @@
+{
+  "info": {
+    "name": "FDE Stripe to ERP - localhost demo",
+    "description": "Import with localhost.postman_environment.json. Start apps using README. Run folder 01 for the ERP-only demo, or folder 02 manually for real sandbox integration. Run folders separately; the whole collection includes mutually exclusive fault controls and a guarded ERP reset. No Stripe API key is stored or required by Postman. See postman/README.md for the demo walkthrough.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "noauth"
+  },
+  "variable": [
+    {
+      "key": "glueBaseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "erpBaseUrl",
+      "value": "http://localhost:8081",
+      "type": "string"
+    },
+    {
+      "key": "amountMinor",
+      "value": "1200",
+      "type": "string"
+    },
+    {
+      "key": "mismatchedAmountMinor",
+      "value": "1300",
+      "type": "string"
+    },
+    {
+      "key": "currency",
+      "value": "USD",
+      "type": "string"
+    },
+    {
+      "key": "stripePaymentIntentId",
+      "value": "pi_REPLACE_WITH_SANDBOX_ID",
+      "type": "string"
+    },
+    {
+      "key": "stripeInvoiceId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "stripeEventId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "reconciliationRunId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "invoiceCursor",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "demoInvoiceId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "demoPaymentIntentId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "demoEtag",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "demoInitialEtag",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "demoPaidVersion",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "demoPaidKey",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "demoRefundKey",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "00 - Health and API docs",
+      "item": [
+        {
+          "name": "Glue health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{glueBaseUrl}}/actuator/health",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"UP\", () => pm.expect(pm.response.json().status).to.eql(\"UP\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "ERP health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{erpBaseUrl}}/actuator/health",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"UP\", () => pm.expect(pm.response.json().status).to.eql(\"UP\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Glue OpenAPI",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{glueBaseUrl}}/v3/api-docs",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "ERP OpenAPI",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{erpBaseUrl}}/v3/api-docs",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "01 - ERP demo - no Stripe required",
+      "description": "Run this folder in order. Direct ERP contract demonstration; does not establish Stripe synchronization. Fresh synthetic invoice/payment IDs per run. Prefer a separate ERP database with glue stopped: reconciliation otherwise discovers these synthetic references. Does not reset existing invoices. Clears active simulator faults.",
+      "item": [
+        {
+          "name": "01 - Clear simulator faults",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{erpBaseUrl}}/demo/faults",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mode\": \"NONE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "02 - Create fresh UNPAID invoice",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{erpBaseUrl}}/invoices",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"{{demoInvoiceId}}\",\n  \"paymentIntentId\": \"{{demoPaymentIntentId}}\",\n  \"expectedAmountMinor\": {{amountMinor}},\n  \"currency\": \"{{currency}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const suffix = pm.variables.replaceIn('{{$guid}}').replace(/-/g, '');",
+                  "pm.collectionVariables.set('demoInvoiceId', 'inv_postman_' + suffix);",
+                  "pm.collectionVariables.set('demoPaymentIntentId', 'pi_postman_' + suffix);",
+                  "pm.collectionVariables.set('demoPaidKey', 'postman_paid_' + suffix);",
+                  "pm.collectionVariables.set('demoRefundKey', 'postman_refund_' + suffix);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"Invoice is UNPAID\", () => pm.expect(pm.response.json().financialStatus).to.eql(\"UNPAID\"));",
+                  "pm.collectionVariables.set(\"demoEtag\", pm.response.headers.get(\"ETag\"));",
+                  "pm.collectionVariables.set(\"demoInitialEtag\", pm.response.headers.get(\"ETag\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "03 - Read invoice and ETag",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{erpBaseUrl}}/invoices/{{demoInvoiceId}}",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Invoice is UNPAID\", () => pm.expect(pm.response.json().financialStatus).to.eql(\"UNPAID\"));",
+                  "pm.collectionVariables.set(\"demoEtag\", pm.response.headers.get(\"ETag\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "04 - Apply PAID projection",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{demoPaidKey}}"
+              },
+              {
+                "key": "If-Match",
+                "value": "{{demoEtag}}"
+              }
+            ],
+            "url": "{{erpBaseUrl}}/invoices/{{demoInvoiceId}}/payment-projection",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentIntentId\": \"{{demoPaymentIntentId}}\",\n  \"currency\": \"{{currency}}\",\n  \"amountCollectedMinor\": {{amountMinor}},\n  \"amountRefundedMinor\": 0,\n  \"status\": \"PAID\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Invoice is PAID\", () => pm.expect(pm.response.json().financialStatus).to.eql(\"PAID\"));",
+                  "pm.collectionVariables.set(\"demoEtag\", pm.response.headers.get(\"ETag\"));",
+                  "pm.collectionVariables.set(\"demoPaidVersion\", String(pm.response.json().version));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "05 - Replay same key with original ETag",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{demoPaidKey}}"
+              },
+              {
+                "key": "If-Match",
+                "value": "{{demoInitialEtag}}"
+              }
+            ],
+            "url": "{{erpBaseUrl}}/invoices/{{demoInvoiceId}}/payment-projection",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentIntentId\": \"{{demoPaymentIntentId}}\",\n  \"currency\": \"{{currency}}\",\n  \"amountCollectedMinor\": {{amountMinor}},\n  \"amountRefundedMinor\": 0,\n  \"status\": \"PAID\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Invoice is PAID\", () => pm.expect(pm.response.json().financialStatus).to.eql(\"PAID\"));",
+                  "pm.test('Replay keeps the committed version', () => pm.expect(String(pm.response.json().version)).to.eql(pm.collectionVariables.get('demoPaidVersion')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "06 - Changed payload with same key is rejected",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{demoPaidKey}}"
+              },
+              {
+                "key": "If-Match",
+                "value": "{{demoEtag}}"
+              }
+            ],
+            "url": "{{erpBaseUrl}}/invoices/{{demoInvoiceId}}/payment-projection",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentIntentId\": \"{{demoPaymentIntentId}}\",\n  \"currency\": \"{{currency}}\",\n  \"amountCollectedMinor\": {{amountMinor}},\n  \"amountRefundedMinor\": {{amountMinor}},\n  \"status\": \"REFUNDED\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 409\", () => pm.response.to.have.status(409));",
+                  "pm.test(\"Payload conflict\", () => pm.expect(pm.response.json().reasonCode).to.eql(\"IDEMPOTENCY_PAYLOAD_CONFLICT\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "07 - Stale version with fresh key is rejected",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{demoPaidKey}}_stale"
+              },
+              {
+                "key": "If-Match",
+                "value": "{{demoInitialEtag}}"
+              }
+            ],
+            "url": "{{erpBaseUrl}}/invoices/{{demoInvoiceId}}/payment-projection",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentIntentId\": \"{{demoPaymentIntentId}}\",\n  \"currency\": \"{{currency}}\",\n  \"amountCollectedMinor\": {{amountMinor}},\n  \"amountRefundedMinor\": 0,\n  \"status\": \"PAID\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 412\", () => pm.response.to.have.status(412));",
+                  "pm.test(\"Stale version\", () => pm.expect(pm.response.json().reasonCode).to.eql(\"STALE_INVOICE_VERSION\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "08 - Amount mismatch is held",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{demoPaidKey}}_mismatch"
+              },
+              {
+                "key": "If-Match",
+                "value": "{{demoEtag}}"
+              }
+            ],
+            "url": "{{erpBaseUrl}}/invoices/{{demoInvoiceId}}/payment-projection",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentIntentId\": \"{{demoPaymentIntentId}}\",\n  \"currency\": \"{{currency}}\",\n  \"amountCollectedMinor\": {{mismatchedAmountMinor}},\n  \"amountRefundedMinor\": 0,\n  \"status\": \"PAID\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"Financial conflict\", () => pm.expect(pm.response.json().reasonCode).to.eql(\"FINANCIAL_CONFLICT\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "09 - Apply full REFUNDED projection",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{demoRefundKey}}"
+              },
+              {
+                "key": "If-Match",
+                "value": "{{demoEtag}}"
+              }
+            ],
+            "url": "{{erpBaseUrl}}/invoices/{{demoInvoiceId}}/payment-projection",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentIntentId\": \"{{demoPaymentIntentId}}\",\n  \"currency\": \"{{currency}}\",\n  \"amountCollectedMinor\": {{amountMinor}},\n  \"amountRefundedMinor\": {{amountMinor}},\n  \"status\": \"REFUNDED\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Invoice is REFUNDED\", () => pm.expect(pm.response.json().financialStatus).to.eql(\"REFUNDED\"));",
+                  "pm.collectionVariables.set(\"demoEtag\", pm.response.headers.get(\"ETag\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "10 - Verify final invoice",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{erpBaseUrl}}/invoices/{{demoInvoiceId}}",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Invoice is REFUNDED\", () => pm.expect(pm.response.json().financialStatus).to.eql(\"REFUNDED\"));",
+                  "pm.test('Full refund preserves collected amount', () => {",
+                  "    const projection = pm.response.json().paymentProjection;",
+                  "    pm.expect(projection.amountCollectedMinor).to.eql(Number(pm.variables.get('amountMinor')));",
+                  "    pm.expect(projection.amountRefundedMinor).to.eql(projection.amountCollectedMinor);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "11 - Inspect ERP counts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{erpBaseUrl}}/demo/state",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"At least one projection exists\", () => pm.expect(pm.response.json().paymentProjectionCount).to.be.at.least(1));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 - Glue integration - Stripe sandbox required",
+      "description": "Run selected requests manually after the README sandbox setup. Requires real sandbox resource, glue test key and matching webhook secret. All collection URLs are localhost; the worker reads Stripe. The existing fixture script creates/links/confirms a sandbox payment; use its invoice and PaymentIntent IDs below. Do not run ERP demo with a fake payment to prove integration. Webhook receipt is asynchronous; inspect work and invoice later. These requests never create payments/refunds in Stripe.",
+      "item": [
+        {
+          "name": "01 - Inspect linked sandbox invoice",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{erpBaseUrl}}/invoices/by-payment/{{stripePaymentIntentId}}",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set(\"stripeInvoiceId\", pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "02 - Send new signed payment notification",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{glueBaseUrl}}/webhooks/stripe",
+            "description": "Creates a fresh event ID. Reads authoritative current facts through Stripe; the supplied event does not force a PAID result.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"{{stripeEventId}}\",\n  \"object\": \"event\",\n  \"type\": \"payment_intent.succeeded\",\n  \"livemode\": false,\n  \"data\": {\n    \"object\": {\n      \"id\": \"{{stripePaymentIntentId}}\",\n      \"object\": \"payment_intent\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('stripeEventId', 'evt_postman_' + pm.variables.replaceIn('{{$guid}}').replace(/-/g, ''));",
+                  "const stripeCrypto = require('crypto-js');",
+                  "const secret = pm.environment.get('stripeWebhookSecret');",
+                  "if (!secret || !secret.startsWith('whsec_')) {",
+                  "    throw new Error('Set stripeWebhookSecret locally to the glue STRIPE_WEBHOOK_SECRET.');",
+                  "}",
+                  "const paymentIntentId = pm.variables.get('stripePaymentIntentId');",
+                  "if (!paymentIntentId || paymentIntentId.includes('REPLACE')) {",
+                  "    throw new Error('Set stripePaymentIntentId to an existing sandbox PaymentIntent.');",
+                  "}",
+                  "const timestamp = Math.floor(Date.now() / 1000).toString();",
+                  "const rawBody = pm.variables.replaceIn(pm.request.body.raw);",
+                  "pm.request.body.update(rawBody);",
+                  "const signature = stripeCrypto.HmacSHA256(timestamp + '.' + rawBody, secret).toString(stripeCrypto.enc.Hex);",
+                  "pm.request.headers.upsert({key: 'Stripe-Signature', value: 't=' + timestamp + ',v1=' + signature});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Receipt recorded\", () => pm.expect(pm.response.json().status).to.eql(\"recorded\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "03 - Resend same event - duplicate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{glueBaseUrl}}/webhooks/stripe",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"{{stripeEventId}}\",\n  \"object\": \"event\",\n  \"type\": \"payment_intent.succeeded\",\n  \"livemode\": false,\n  \"data\": {\n    \"object\": {\n      \"id\": \"{{stripePaymentIntentId}}\",\n      \"object\": \"payment_intent\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('stripeEventId')) { throw new Error('Send a new notification first.'); }",
+                  "const stripeCrypto = require('crypto-js');",
+                  "const secret = pm.environment.get('stripeWebhookSecret');",
+                  "if (!secret || !secret.startsWith('whsec_')) {",
+                  "    throw new Error('Set stripeWebhookSecret locally to the glue STRIPE_WEBHOOK_SECRET.');",
+                  "}",
+                  "const paymentIntentId = pm.variables.get('stripePaymentIntentId');",
+                  "if (!paymentIntentId || paymentIntentId.includes('REPLACE')) {",
+                  "    throw new Error('Set stripePaymentIntentId to an existing sandbox PaymentIntent.');",
+                  "}",
+                  "const timestamp = Math.floor(Date.now() / 1000).toString();",
+                  "const rawBody = pm.variables.replaceIn(pm.request.body.raw);",
+                  "pm.request.body.update(rawBody);",
+                  "const signature = stripeCrypto.HmacSHA256(timestamp + '.' + rawBody, secret).toString(stripeCrypto.enc.Hex);",
+                  "pm.request.headers.upsert({key: 'Stripe-Signature', value: 't=' + timestamp + ',v1=' + signature});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Duplicate receipt\", () => pm.expect(pm.response.json().status).to.eql(\"duplicate\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "04 - Inspect payment work",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{glueBaseUrl}}/operations/work/{{stripePaymentIntentId}}",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Work state is visible\", () => pm.expect(pm.response.json()).to.have.property(\"state\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "05 - Inspect attempt history",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{glueBaseUrl}}/operations/work/{{stripePaymentIntentId}}/attempts?limit=20",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "06 - Inspect synchronized invoice",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{erpBaseUrl}}/invoices/by-payment/{{stripePaymentIntentId}}",
+            "description": "Repeat after the worker runs. Expect PAID after payment, REFUNDED after a full successful sandbox refund. A 200 webhook alone is not completion."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "07 - Request reconciliation",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{glueBaseUrl}}/operations/reconciliations",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 202\", () => pm.response.to.have.status(202));",
+                  "pm.collectionVariables.set(\"reconciliationRunId\", pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "08 - Inspect reconciliation run",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{glueBaseUrl}}/operations/reconciliations/{{reconciliationRunId}}",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "09 - Old success notification after refund",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{glueBaseUrl}}/webhooks/stripe",
+            "description": "First create a full successful refund using the existing sandbox fixture tool. A new payment-success notification still leads the worker to current refund facts. Then repeat requests 04 and 06; expect REFUNDED.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"{{stripeEventId}}\",\n  \"object\": \"event\",\n  \"type\": \"payment_intent.succeeded\",\n  \"livemode\": false,\n  \"data\": {\n    \"object\": {\n      \"id\": \"{{stripePaymentIntentId}}\",\n      \"object\": \"payment_intent\"\n    }\n  },\n  \"created\": 1600000000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('stripeEventId', 'evt_postman_' + pm.variables.replaceIn('{{$guid}}').replace(/-/g, ''));",
+                  "const stripeCrypto = require('crypto-js');",
+                  "const secret = pm.environment.get('stripeWebhookSecret');",
+                  "if (!secret || !secret.startsWith('whsec_')) {",
+                  "    throw new Error('Set stripeWebhookSecret locally to the glue STRIPE_WEBHOOK_SECRET.');",
+                  "}",
+                  "const paymentIntentId = pm.variables.get('stripePaymentIntentId');",
+                  "if (!paymentIntentId || paymentIntentId.includes('REPLACE')) {",
+                  "    throw new Error('Set stripePaymentIntentId to an existing sandbox PaymentIntent.');",
+                  "}",
+                  "const timestamp = Math.floor(Date.now() / 1000).toString();",
+                  "const rawBody = pm.variables.replaceIn(pm.request.body.raw);",
+                  "pm.request.body.update(rawBody);",
+                  "const signature = stripeCrypto.HmacSHA256(timestamp + '.' + rawBody, secret).toString(stripeCrypto.enc.Hex);",
+                  "pm.request.headers.upsert({key: 'Stripe-Signature', value: 't=' + timestamp + ',v1=' + signature});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Receipt recorded\", () => pm.expect(pm.response.json().status).to.eql(\"recorded\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 - Operations and inspection",
+      "item": [
+        {
+          "name": "List work",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{glueBaseUrl}}/operations/work?limit=100",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List reconciliation runs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{glueBaseUrl}}/operations/reconciliations?limit=20",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List invoices - first page",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{erpBaseUrl}}/invoices?limit=20",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set(\"invoiceCursor\", pm.response.json().nextCursor || \"\");"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List invoices - next page",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{erpBaseUrl}}/invoices?limit=20&cursor={{invoiceCursor}}",
+            "description": "Use after a nonempty nextCursor. An empty cursor restarts the first page. Treat the cursor as opaque."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set(\"invoiceCursor\", pm.response.json().nextCursor || \"\");"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "ERP counts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{erpBaseUrl}}/demo/state",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Metric names",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{glueBaseUrl}}/actuator/metrics",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Work counts by state",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{glueBaseUrl}}/actuator/metrics/sync.work",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Oldest pending work age",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{glueBaseUrl}}/actuator/metrics/sync.oldest.work.seconds",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Attempt latency",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{glueBaseUrl}}/actuator/metrics/sync.attempt.latency",
+            "description": "Available after at least one attempt has been recorded."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Last reconciliation outcome",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{glueBaseUrl}}/actuator/metrics/sync.reconciliation.last.outcome",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "04 - Manual failure controls and reset",
+      "description": "Run requests individually. Faults affect unseen ERP projection keys. Configure before a new sandbox payment/refund changes current facts; already-correct observations may be no-ops. Reset deletes only ERP simulator data. Never run this folder as one demo.",
+      "item": [
+        {
+          "name": "Fail next two writes before commit",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{erpBaseUrl}}/demo/faults",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mode\": \"FAIL_BEFORE_WRITE\",\n  \"remainingRequests\": 2\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Commit then delay response 3 seconds",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{erpBaseUrl}}/demo/faults",
+            "description": "Exceeds default glue HTTP deadline of 2000 ms; retry must replay the stored result.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mode\": \"APPLY_THEN_DELAY\",\n  \"remainingRequests\": 1,\n  \"delayMs\": 3000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Force one version conflict",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{erpBaseUrl}}/demo/faults",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mode\": \"VERSION_CONFLICT\",\n  \"remainingRequests\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Clear faults",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{erpBaseUrl}}/demo/faults",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mode\": \"NONE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Requeue held payment after fixing cause",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{glueBaseUrl}}/operations/work/{{stripePaymentIntentId}}/requeue",
+            "description": "Use for FAILED or NEEDS_REVIEW after fixing the cause; resets the retry budget."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "DELETE ERP DEMO DATA - explicit opt-in",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{erpBaseUrl}}/demo/reset",
+            "description": "Deletes all local ERP invoices, projections and fault controls. Glue and Stripe data are retained. Explicit local allowErpReset=yes is required."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get('allowErpReset') !== 'yes') {",
+                  "    console.warn('Reset skipped. Set allowErpReset=yes locally only when you intend to delete ERP data.');",
+                  "    pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
