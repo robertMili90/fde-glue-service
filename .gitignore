@@ -13,3 +13,7 @@
 *.iml
 .vscode/
 *.log
+
+# Local Python fixture/demo bytecode
+__pycache__/
+*.pyc

@@ -1,0 +1,47 @@
+server:
+  port: ${GLUE_PORT:8080}
+spring:
+  application:
+    name: glue-service
+  datasource:
+    url: jdbc:h2:file:${GLUE_DATA_DIR:./data/glue-service}/glue;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password: ""
+    hikari:
+      maximum-pool-size: 4
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  task:
+    scheduling:
+      pool:
+        size: 2
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+      accept-float-as-int: false
+  flyway:
+    locations: classpath:db/glue
+  h2:
+    console:
+      enabled: false
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: never
+springdoc:
+  override-with-generic-response: false
+  swagger-ui:
+    path: /swagger-ui.html
+stripe:
+  secret-key: ${STRIPE_SECRET_KEY:}
+  webhook-secret: ${STRIPE_WEBHOOK_SECRET:}
+erp:
+  base-url: ${ERP_BASE_URL:http://localhost:8081}
+sync:
+  enabled: ${SYNC_ENABLED:true}

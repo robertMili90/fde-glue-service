@@ -1,0 +1,32 @@
+services:
+  erp-simulator:
+    build:
+      context: .
+      args:
+        MODULE: erp-simulator
+    ports:
+      - "127.0.0.1:${ERP_PORT:-8081}:8081"
+    environment:
+      ERP_PORT: 8081
+      ERP_DATA_DIR: /data
+    volumes:
+      - erp-data:/data
+  glue-service:
+    build:
+      context: .
+      args:
+        MODULE: glue-service
+    ports:
+      - "127.0.0.1:${GLUE_PORT:-8080}:8080"
+    environment:
+      GLUE_PORT: 8080
+      GLUE_DATA_DIR: /data
+      SYNC_ENABLED: ${SYNC_ENABLED:-true}
+      ERP_BASE_URL: http://erp-simulator:8081
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+    volumes:
+      - glue-data:/data
+volumes:
+  glue-data:
+  erp-data:

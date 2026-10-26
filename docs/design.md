@@ -91,9 +91,21 @@ Do not use a truncated embedded refunds list or event.created as a version.
 
 For this slice:
 
-- A PaymentIntent that has not succeeded remains waiting for provider state.
-  It must not create a paid projection. A recoverable payment attempt failure is
-  not automatically a permanent invoice failure.
+- Classify the current PaymentIntent status explicitly before projecting money:
+
+  | Stripe status | Decision | Work reason |
+  | --- | --- | --- |
+  | requires_payment_method, requires_confirmation, requires_action, processing | WAITING_PROVIDER; schedule a provider refresh without consuming transient retries | PAYMENT_NOT_SUCCEEDED |
+  | canceled | DONE; no provider polling or financial projection | PAYMENT_CANCELED |
+  | succeeded | Normalize collection/refunds using the rules below | SYNCHRONIZED, or REFUND_PENDING when a refund is pending |
+  | requires_capture | NEEDS_REVIEW; manual capture is outside this slice | UNSUPPORTED_CAPTURE |
+  | Any unknown status | NEEDS_REVIEW; no polling or financial projection | UNKNOWN_PAYMENT_STATUS |
+
+  Only succeeded can create a paid/refunded projection. A recoverable payment
+  attempt failure is not automatically a permanent invoice failure. The adapter
+  rejects a missing status as INVALID_STRIPE_PAYMENT. See Stripe's
+  [PaymentIntent lifecycle](https://docs.stripe.com/payments/paymentintents/lifecycle)
+  and [cancellation contract](https://docs.stripe.com/api/payment_intents/cancel).
 - For a succeeded payment, collected amount must equal the ERP expected amount
   and currencies must match.
 - No successful refund means PAID.
@@ -159,6 +171,13 @@ cursor: resume subsequent batches rather than repeatedly starting from page one.
 Only mark a scan complete after its final page; the next full scan starts anew.
 Document the small-demo throughput limit. Coalesce repeated requests for one payment.
 
+After observing a canceled PaymentIntent, ordinary reconciliation skips its
+DONE/PAYMENT_CANCELED work durably, including after restart. This exception does
+not apply to succeeded payments, which can acquire later refunds. New supported
+webhook events still request another observation; notifications received during
+work still preserve their outstanding generation. Cancellation does not mark an
+invoice failed, paid or refunded: it leaves ERP financial facts unchanged.
+
 Provide operational endpoints to inspect work/attempt history, trigger a
 reconciliation run, inspect run outcomes, and explicitly requeue a held/failed job.
 Use 202 for queued operations. These APIs enqueue work rather than bypassing it.
@@ -210,3 +229,43 @@ Support inspecting the state and reseeding only the local simulator.
 
 Retain these as concise decision records and amend them with evidence from the
 implementation. No unanswered product-selection question blocks development.
+
+## Implementation decisions and evidence
+
+The authoritative business rules are maintained above. The implementation uses
+Spring Data JPA repositories with Flyway-managed schemas, and small DB gate rows
+to serialize local mutations. Transactional application services coordinate the
+repositories; gate-lock queries join the caller's transaction. Assigned-ID entities
+use explicit new-instance detection to retain insert semantics. The
+[persistence follow-up](refactoring-review.md#spring-data-repository-follow-up)
+records the implementation and regression evidence. A single synchronized worker processes one payment at a time;
+no gate transaction spans a remote request. This deliberately favors inspectable
+single-instance correctness over independent queue/claim scaling.
+
+Requested/processing/completed generations preserve notifications during work.
+Failed/held jobs retain outstanding requests until explicit requeue. Attempt
+identity makes local completion safe to repeat after an ambiguous commit response;
+startup and unowned-claim recovery are valid only under the one-worker boundary.
+
+Each ERP invoice contains at most one absolute financial projection; its unique
+PaymentIntent association provides the business identity independently of the
+operation-key record. Demo faults are persisted. The apply-then-delay response
+wait occurs in the HTTP controller after the store transaction returns.
+
+Module-specific migration locations and separate executable artifacts allow tests
+to run both real applications together without sharing runtime entities or stores.
+The simulator is a test-only dependency of glue. The deployed glue JAR contains
+no simulator classes. Fixture IDs have explicit URL-safe/length bounds in the
+[ERP contract](../contracts/erp-api.yaml); malformed money never truncates floating
+JSON amounts into integral amounts.
+
+The [README](../README.md) owns exact settings, combined retry budgets, startup,
+metrics, and demo commands. The [scenario mapping](scenarios.md),
+[milestone evidence](implementation-plan.md), and [review](reliability-review.md)
+record executed verification and its practical limits. No account-wide discovery,
+broker, runtime AI, or production HA feature was added.
+
+
+The later [refactoring review](refactoring-review.md) maps feature packages and
+managed transaction/lifecycle boundaries. Opaque pagination progress is defined
+in the ERP contract; the README owns the total scan budget and recovery settings.

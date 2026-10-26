@@ -52,6 +52,36 @@ Choose focused checks during iteration and run the complete relevant suite befor
 handoff. Bootstrap must document the actual commands and any required profiles.
 Do not make real Stripe network access a prerequisite for the default test suite.
 
+## Code quality
+
+- Organize production code by feature/responsibility, leaving only application
+  entry points in the root package. Distinguish HTTP handling, orchestration,
+  provider decoding, policy, and persistence without creating empty layers.
+- Use specific names such as stripeEventId, paymentIntentId, rawBody,
+  reconciliationRun, and nextCursor. Short conventional names suit obvious locals.
+- Use explicit imports, including static imports. Use qualified type names only
+  for genuine naming collisions.
+- Use braces, one statement per line, consistent formatting, readable constructors,
+  and named steps for business decisions. Avoid nested ternaries.
+- Give classes cohesive responsibilities; extract methods that clarify meaningful
+  steps. Avoid arbitrary size limits, trivial wrappers, interface-per-class,
+  abstract base services, unnecessary mappers, and catch-all common/utils packages.
+- Use typed request/response/read models and immutable records where appropriate.
+  Do not expose persistence entities, ResponseEntity<?>, or ad hoc response maps.
+- Use scoped enums for finite states; preserve persisted/JSON names and stable,
+  named reason codes. Make valid transitions and timestamp/reason changes explicit.
+  Encapsulate entity mutations rather than exposing mutable fields.
+- Use constructor injection and focused Spring Data JPA repositories for persistence.
+  Keep multi-repository transaction boundaries in application services and acquire
+  mutation locks within those transactions. Preserve assigned-ID insert semantics;
+  never construct EntityManager manually or expose persistence entities over HTTP.
+- Comment non-obvious invariants, transaction/lock choices, and trade-offs rather
+  than narrating code. Preserve useful failure causes and identifiers in logs
+  without credentials or raw payloads; avoid swallowed or redundant failures.
+- Keep behavior-focused tests and fixture setup as readable as production code.
+- Run the pinned formatter and import/braces checks through ./mvnw verify.
+  Apply formatting with ./mvnw spotless:apply; formatting alone is not design review.
+
 ## Execution boundaries
 
 Develop locally within the agreed scope without repeated approval requests.
@@ -71,3 +101,10 @@ Record actual AI assistance in docs/ai-usage.md as work happens.
 Keep docs/implementation-plan.md and README status accurate.
 Report changes, commands actually executed, results, skipped checks, and remaining
 limitations. Treat agent review as supplementary to executable verification.
+
+<!-- CODEGRAPH_START -->
+## CodeGraph
+
+Project-local setup, verification, and CLI/MCP usage are maintained in the
+[CodeGraph tooling guide](docs/agent-tooling.md).
+<!-- CODEGRAPH_END -->

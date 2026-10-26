@@ -2,7 +2,8 @@
 
 This is an English, repository-ready development brief for Robert Militaru's
 Adobe Senior Forward Deployed Engineer take-home assignment. It contains
-instructions and acceptance criteria; application code has not been implemented.
+instructions and acceptance criteria. The implementation and verified startup
+commands are described in [README.md](README.md).
 
 ## Start on your laptop
 

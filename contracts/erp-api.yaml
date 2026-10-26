@@ -7,6 +7,10 @@ info:
     by the ERP. The glue service writes absolute payment projections.
     Monetary amounts are integral minor units with explicit currency.
     Equivalent compatible refinements must be documented and tested.
+    Implemented fixture identifiers are URL-safe ASCII and at most 255 characters,
+    so every created invoice remains addressable through the path endpoints.
+    Malformed requests (including fractional amounts) return 400 with a safe
+    reasonCode/message problem and field-specific errors when available.
 servers:
   - url: http://localhost:8081
 paths:
@@ -14,6 +18,14 @@ paths:
     get:
       operationId: listLinkedInvoices
       summary: Enumerate linked invoices of every financial status
+      description: |
+        Treat cursor tokens as opaque and echo them unchanged. Item IDs have no
+        ordering guarantee, and nextCursor need not be an invoice ID. A non-final
+        page contains items and a nonempty nextCursor of at most 255 characters
+        that differs from the submitted cursor. The final page omits nextCursor.
+        The simulator currently uses ascending invoice IDs internally; clients
+        must not depend on that choice. Consumers must bound enumeration and
+        report non-advancing or over-budget scans as incomplete/failed.
       parameters:
         - in: query
           name: cursor
@@ -22,6 +34,7 @@ paths:
           name: limit
           schema: {type: integer, minimum: 1, maximum: 100, default: 100}
       responses:
+        '400': {$ref: '#/components/responses/BadRequest'}
         '200':
           description: Stable cursor page; nextCursor is absent on the final page
           content:
@@ -33,7 +46,7 @@ paths:
                   items:
                     type: array
                     items: {$ref: '#/components/schemas/Invoice'}
-                  nextCursor: {type: string}
+                  nextCursor: {type: string, minLength: 1, maxLength: 255}
     post:
       operationId: createInvoiceFixture
       summary: Create/link an invoice for the local scenario
@@ -47,6 +60,7 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/CreateInvoice'}
       responses:
+        '400': {$ref: '#/components/responses/BadRequest'}
         '201':
           description: Created in UNPAID state
           content:
@@ -62,6 +76,7 @@ paths:
           required: true
           schema: {type: string}
       responses:
+        '400': {$ref: '#/components/responses/BadRequest'}
         '200':
           description: Exactly one linked invoice
           content:
@@ -74,6 +89,7 @@ paths:
       parameters:
         - {$ref: '#/components/parameters/InvoiceId'}
       responses:
+        '400': {$ref: '#/components/responses/BadRequest'}
         '200':
           description: Current invoice and financial projection
           headers:
@@ -111,6 +127,7 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/PaymentProjection'}
       responses:
+        '400': {$ref: '#/components/responses/BadRequest'}
         '200':
           description: Committed result or identical replay
           headers:
@@ -155,15 +172,17 @@ paths:
                 mode:
                   type: string
                   enum: [NONE, FAIL_BEFORE_WRITE, APPLY_THEN_DELAY, VERSION_CONFLICT]
-                remainingRequests: {type: integer, minimum: 1, default: 1}
+                remainingRequests: {type: integer, minimum: 1, maximum: 1000, default: 1}
                 delayMs: {type: integer, minimum: 0, maximum: 10000}
       responses:
+        '400': {$ref: '#/components/responses/BadRequest'}
         '204': {description: Fault configured}
   /demo/state:
     get:
       operationId: inspectDemoState
       summary: Inspect local state and counts for failure demonstrations
       responses:
+        '400': {$ref: '#/components/responses/BadRequest'}
         '200':
           description: Invoice/projection counts and committed update count
           content:
@@ -180,6 +199,7 @@ paths:
       operationId: resetLocalDemo
       summary: Clear only this simulator's local data and active fault controls
       responses:
+        '400': {$ref: '#/components/responses/BadRequest'}
         '204': {description: Local simulator reset; does not touch Stripe or glue data}
 components:
   parameters:
@@ -187,23 +207,23 @@ components:
       in: path
       name: invoiceId
       required: true
-      schema: {type: string, minLength: 1}
+      schema: {type: string, minLength: 1, maxLength: 255, pattern: '^[A-Za-z0-9_-]+$'}
   schemas:
     CreateInvoice:
       type: object
       additionalProperties: false
       required: [id, expectedAmountMinor, currency, paymentIntentId]
       properties:
-        id: {type: string, minLength: 1}
+        id: {type: string, minLength: 1, maxLength: 255, pattern: '^[A-Za-z0-9_-]+$'}
         expectedAmountMinor: {type: integer, format: int64, minimum: 1}
         currency: {type: string, pattern: '^[A-Z]{3}$'}
-        paymentIntentId: {type: string, pattern: '^pi_'}
+        paymentIntentId: {type: string, maxLength: 255, pattern: '^pi_[A-Za-z0-9_]+$'}
     PaymentProjection:
       type: object
       additionalProperties: false
       required: [paymentIntentId, currency, amountCollectedMinor, amountRefundedMinor, status]
       properties:
-        paymentIntentId: {type: string, pattern: '^pi_'}
+        paymentIntentId: {type: string, maxLength: 255, pattern: '^pi_[A-Za-z0-9_]+$'}
         currency: {type: string, pattern: '^[A-Z]{3}$'}
         amountCollectedMinor: {type: integer, format: int64, minimum: 1}
         amountRefundedMinor: {type: integer, format: int64, minimum: 0}
@@ -217,10 +237,10 @@ components:
       additionalProperties: false
       required: [id, expectedAmountMinor, currency, paymentIntentId, version, financialStatus]
       properties:
-        id: {type: string, minLength: 1}
+        id: {type: string, minLength: 1, maxLength: 255, pattern: '^[A-Za-z0-9_-]+$'}
         expectedAmountMinor: {type: integer, format: int64, minimum: 1}
         currency: {type: string, pattern: '^[A-Z]{3}$'}
-        paymentIntentId: {type: string, pattern: '^pi_'}
+        paymentIntentId: {type: string, maxLength: 255, pattern: '^pi_[A-Za-z0-9_]+$'}
         version: {type: integer, format: int64, minimum: 1}
         financialStatus: {type: string, enum: [UNPAID, PAID, REFUNDED]}
         paymentProjection: {$ref: '#/components/schemas/PaymentProjection'}
@@ -232,7 +252,21 @@ components:
         message: {type: string}
         invoiceId: {type: string}
         currentVersion: {type: integer, format: int64}
+        errors:
+          type: array
+          description: Optional field-specific errors; rejected values are not echoed
+          items:
+            type: object
+            required: [field, message]
+            properties:
+              field: {type: string}
+              message: {type: string}
   responses:
+    BadRequest:
+      description: Malformed body, invalid field, query parameter or required header
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Problem'}
     NotFound:
       description: Invoice/payment association was not found
       content:
