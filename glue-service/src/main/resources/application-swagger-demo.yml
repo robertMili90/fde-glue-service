@@ -1,0 +1,4 @@
+# Re-read run IDs after reseeding or restarting instead of caching the first OpenAPI document.
+springdoc:
+  cache:
+    disabled: true

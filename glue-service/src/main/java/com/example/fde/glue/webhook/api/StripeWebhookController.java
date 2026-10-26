@@ -5,10 +5,6 @@ import com.example.fde.glue.observability.FailureDiagnostics;
 import com.example.fde.glue.stripe.InvalidStripeWebhook;
 import com.example.fde.glue.stripe.WebhookRejection;
 import com.example.fde.glue.webhook.application.AcceptStripeWebhook;
-import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.media.Content;
-import io.swagger.v3.oas.annotations.media.Schema;
-import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
@@ -32,42 +28,6 @@ public class StripeWebhookController {
     this.acceptance = acceptance;
   }
 
-  @Operation(
-      summary = "Verify and durably accept a Stripe test event",
-      requestBody =
-          @io.swagger.v3.oas.annotations.parameters.RequestBody(
-              required = true,
-              content =
-                  @Content(
-                      mediaType = "application/json",
-                      schema =
-                          @Schema(
-                              type = "object",
-                              description =
-                                  "Stripe snapshot event object; signature is computed over the exact raw body"))),
-      responses = {
-        @ApiResponse(
-            responseCode = "200",
-            description = "Recorded, duplicate or safely ignored event",
-            content =
-                @Content(
-                    mediaType = "application/json",
-                    schema = @Schema(implementation = Receipt.class))),
-        @ApiResponse(
-            responseCode = "400",
-            description = "Invalid signature, event or test-mode reference",
-            content =
-                @Content(
-                    mediaType = "application/json",
-                    schema = @Schema(implementation = ApiProblem.class))),
-        @ApiResponse(
-            responseCode = "503",
-            description = "Verification unavailable or durable acceptance failed; retry delivery",
-            content =
-                @Content(
-                    mediaType = "application/json",
-                    schema = @Schema(implementation = ApiProblem.class)))
-      })
   @PostMapping("/webhooks/stripe")
   public Receipt receive(
       @RequestBody String rawBody, @RequestHeader("Stripe-Signature") String signature) {

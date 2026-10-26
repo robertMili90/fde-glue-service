@@ -46,7 +46,7 @@ injection. Services own the short multi-repository transactions; repository gate
 queries retain pessimistic locking, and assigned IDs retain insert semantics.
 The [persistence follow-up](docs/refactoring-review.md#spring-data-repository-follow-up)
 records these choices and their regression evidence. Latest Maven verification
-passed 71 tests. The [testing report](docs/testing-report.md) records the suite
+passed 73 tests. The [testing report](docs/testing-report.md) records the suite
 inventory, measured coverage (90.57% lines; 74.50% branches), reproduction commands
 and verification limits. Previous packaged-demo evidence, including retry recovery
 across a JVM restart, is recorded in the milestone log.
@@ -56,6 +56,60 @@ separate temporary data directories and a local Stripe stub. It exercises a
 10-invoice burst, a first missing webhook, a late refund, and a persisted retry
 across an actual glue JVM restart. It reports measured elapsed time and removes
 its own processes/data afterwards. It never creates real Stripe resources.
+
+## Persistent Swagger demo with valid IDs
+
+After building, start a complete local demo without Stripe credentials:
+
+```sh
+python3 scripts/swagger-demo.py
+```
+
+Leave the command running and open [glue Swagger](http://localhost:18080/swagger-ui.html)
+and [ERP Swagger](http://localhost:18081/swagger-ui.html). Both databases are
+prepopulated before the command prints “Seeded demo ready”. They live under
+`data/swagger-demo`, separately from the normal applications on ports 8080/8081.
+Ctrl-C stops the demo's own processes; running the command again reuses these
+files, adds missing fixtures and preserves existing invoice edits and history.
+Occupied ports cause startup to fail without touching another application.
+Override ports or storage with `--glue-port`, `--erp-port` and `--data-dir`.
+
+| Invoice | Local payment | Initial invoice / work state |
+| --- | --- | --- |
+| inv_demo | pi_demo | PAID / DONE, with persisted attempts |
+| inv_refunded | pi_refunded | REFUNDED / DONE |
+| inv_unpaid | pi_unpaid | UNPAID / WAITING_PROVIDER |
+| inv_review | pi_review | UNPAID / NEEDS_REVIEW, amount mismatch |
+
+The runner seeds via the public ERP APIs and reconciliation, so work and attempts
+are produced by the ordinary pipeline. The read-only Stripe HTTP fixture serves
+these synthetic payments and `pi_create`; unknown IDs return 404. The demo uses
+only synthetic credentials and never contacts real Stripe. Its explicit
+`swagger-demo` profile enables a Swagger request hook that signs webhook bodies
+with a public synthetic key. This hook is absent during ordinary application
+startup; the profile rejects other credentials or a remote provider URL.
+
+Try GET endpoints immediately: their IDs exist, and the reconciliation parameter
+uses a run ID from the current database. Glue read-response examples also use
+current work, attempts and run records, including their real IDs. The default Paid PUT replays the seeded
+`demo-paid-v1` operation successfully with its original quoted `"1"` header.
+The Refunded PUT needs a new key and the invoice's latest ETag as described in
+Swagger. Manual ERP edits do not change provider facts, so later reconciliation
+can correctly hold a conflict for review. Creation reserves `inv_create` /
+`pi_create`: the first POST succeeds; repeats return the documented 409.
+Fault examples intentionally affect subsequent writes. Reset intentionally
+empties the ERP; restart this command to restore missing fixtures. Error response
+examples illustrate failures; they are not additional successful requests.
+
+Run the packaged demo's endpoint, reseeding and restart checks with:
+
+```sh
+python3 scripts/swagger-demo.py --check
+```
+
+This check uses temporary ports/databases, exercises every documented endpoint,
+verifies signature rejection/deduplication and edit preservation across both JVM
+restarts, then verifies reset/reseeding and removes its own data and processes.
 
 ## Run the applications
 
@@ -97,9 +151,23 @@ one glue instance and one process per H2 file.
 Health: [glue](http://localhost:8080/actuator/health) and
 [ERP](http://localhost:8081/actuator/health). Swagger UI:
 [glue](http://localhost:8080/swagger-ui.html) and
-[ERP](http://localhost:8081/swagger-ui.html). Generated OpenAPI: `/v3/api-docs`. Endpoint metadata explicitly describes success
-statuses, asynchronous acceptance, error schemas, invoice ETags, and the webhook
-event object. HTTP tests compare these documents with representative responses.
+[ERP](http://localhost:8081/swagger-ui.html). Generated OpenAPI: `/v3/api-docs`.
+Both Swagger pages include a walkthrough, endpoint usage, parameter/header guidance,
+and named request/response examples, including errors and empty results. Expand an
+endpoint and select **Try it out**; select a named example for paid/refunded writes
+or fault modes. The ERP walkthrough works without Stripe credentials. For webhooks,
+replace the sample IDs and compute a fresh signature over the exact request body;
+the displayed signature header is a placeholder. Bodyless operations explicitly say
+to send no body, and 204 responses are empty. HTTP tests execute the generated ERP
+and webhook examples and check the documents against representative responses.
+Swagger documentation is maintained outside the controllers in
+[glue-api.yaml](glue-service/src/main/resources/openapi/glue-api.yaml) and
+[erp-api.yaml](erp-simulator/src/main/resources/openapi/erp-api.yaml). Edit those
+resources for descriptions, parameters, status codes and examples. Each app's
+OpenAPI configuration applies them to discovered routes; DTO schemas still come
+from Java models. The optional demo-specific documentation and browser signing
+hook live in [swagger-demo.yaml](glue-service/src/main/resources/openapi/swagger-demo.yaml)
+and [swagger-demo-signing.js](glue-service/src/main/resources/openapi/swagger-demo-signing.js). Documented routes must match running controller mappings.
 Health includes the local database. Flyway owns schema changes; JPA validates the
 schema and Open Session in View is disabled.
 

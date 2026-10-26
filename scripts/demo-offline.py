@@ -10,13 +10,12 @@ import subprocess
 import tempfile
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlsplit
+from http.server import ThreadingHTTPServer
 from urllib.request import Request, urlopen
 
+from stripe_stub import PAYMENTS, SECRET, Payment, StripeStub
+
 ROOT = Path(__file__).resolve().parents[1]
-SECRET = "whsec_offline_demo"
-FACTS = {}
 
 
 def call(base, path, body=None, headers=None):
@@ -43,33 +42,6 @@ def port():
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
-
-
-class StripeStub(BaseHTTPRequestHandler):
-    def log_message(self, *_):
-        pass
-
-    def do_GET(self):
-        path = urlsplit(self.path)
-        if path.path.startswith("/v1/payment_intents/"):
-            payment = path.path.rsplit("/", 1)[1]
-            result = {"id": payment, "object": "payment_intent", "amount": 1200,
-                      "amount_received": 1200, "currency": "usd", "status": "succeeded",
-                      "livemode": False, "capture_method": "automatic"}
-        elif path.path == "/v1/refunds":
-            payment = parse_qs(path.query)["payment_intent"][0]
-            data = [] if not FACTS[payment] else [{"id": "re_" + payment, "object": "refund",
-                    "payment_intent": payment, "amount": 1200, "currency": "usd", "status": "succeeded"}]
-            result = {"object": "list", "url": "/v1/refunds", "data": data, "has_more": False}
-        else:
-            self.send_error(404)
-            return
-        body = json.dumps(result).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
 
 
 def event(glue, event_id, payment):
@@ -125,7 +97,7 @@ def main():
 
         def seed(index):
             payment = "pi_demo_" + str(index)
-            FACTS[payment] = False
+            PAYMENTS[payment] = Payment()
             call(erp, "/invoices", {"id": "invoice_" + str(index), "expectedAmountMinor": 1200,
                  "currency": "USD", "paymentIntentId": payment})
             return payment
@@ -143,7 +115,7 @@ def main():
                      all(item["state"] == "DONE" for item in call(glue, "/operations/work")), "burst convergence")
             elapsed = round(time.monotonic() - started, 3)
             assert call(erp, "/demo/state") == {"invoiceCount": 10, "paymentProjectionCount": 10, "appliedUpdateCount": 10}
-            FACTS["pi_demo_9"] = True
+            PAYMENTS["pi_demo_9"] = Payment(refunded=True)
             event(glue, "evt_old_success_after_refund", "pi_demo_9")
             wait_for(lambda: call(erp, "/invoices/invoice_9")["financialStatus"] == "REFUNDED", "late refund")
             call(erp, "/demo/faults", {"mode": "FAIL_BEFORE_WRITE", "remainingRequests": 1})

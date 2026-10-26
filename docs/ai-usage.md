@@ -319,3 +319,143 @@ Stripe, desktop import, optional mutation-control run or Maven verification was
 performed for these artifact/documentation-only edits. The unrelated existing
 Java working-tree edit was preserved. No sub-agents, push/publish or global agent
 configuration changes were involved.
+
+### Swagger endpoint documentation — 2026-10-26
+
+The user requested explicit endpoint documentation and request/response payload
+examples in Swagger. Codex used the local fde-implement-slice skill, read the
+design/scenarios, ERP HTTP contract, controllers, response models, persistence
+behavior and existing contract tests. CodeGraph tools/CLI were unavailable in
+this session; targeted source/configuration reads were used instead.
+
+Both generated Swagger pages now include a walkthrough, endpoint descriptions,
+parameter/header examples, named success/error payloads, pagination guidance,
+bodyless-request/204 semantics, webhook signing instructions, asynchronous
+completion guidance and local fault/reset behavior. Examples are owned by each
+application's OpenAPI configuration and referenced by endpoint annotations.
+The existing HTTP contract tests now execute generated ERP example payloads
+through create/paid/replay/refunded and sign/deliver both webhook examples.
+No synchronization rules, dependencies or runtime endpoint behavior changed.
+
+Initial formatting exposed annotation parentheses mistakes, which were fixed.
+Initial generated-document assertions exposed unnamed examples being serialized
+as a singular example; all response examples now have explicit names. The focused
+ERP contract/example test passed. Browser inspection then exposed Springdoc
+stripping the quotes from the If-Match parameter example. Codex corrected its
+encoded annotation value and extended the test to send the generated header
+unchanged, comparing it with the created invoice's quoted ETag.
+
+Final `./mvnw -B -ntp spotless:apply` and `./mvnw -B -ntp verify` passed: 71 tests,
+zero failures/errors/skips, plus Spotless and Checkstyle. The ERP Swagger UI was
+inspected through Air using the packaged executable with an isolated in-memory
+database: walkthrough, descriptions and named request/response selectors rendered,
+with no captured console errors. The rebuilt packaged document retained the
+quoted If-Match example. The glue UI was also inspected with scheduled work disabled
+and an isolated in-memory database; the workflow and endpoint groups rendered.
+The webhook operation did not expand during the final browser interaction, so
+its examples were verified through the HTTP suite rather than browser selectors.
+Temporary preview processes were stopped.
+No real Stripe/Docker checks were run. No sub-agents,
+publication or global agent configuration changes were involved.
+
+### Swagger documentation extraction — 2026-10-26
+
+The user requested readable controllers with Swagger documentation elsewhere.
+Codex continued with the fde-implement-slice workflow, inspected the existing
+annotations/configuration and HTTP contract, and captured the generated OpenAPI
+from both pre-refactor executable JARs using temporary isolated databases and
+ports. CodeGraph CLI was available this time: status initially showed stale
+changes, so Codex synchronized and verified the index, and complemented graph
+exploration with direct source/configuration reads.
+
+Descriptions, parameters, request/response examples, status codes and Swagger
+walkthroughs moved into module-local YAML resources. Both OpenAPI configurations
+load these resources and apply documentation only to discovered endpoints. DTO
+schemas remain generated from Java; concrete polymorphic/error response models
+are explicitly registered. A stale documented path/method is rejected instead
+of silently advertised. Controllers retain Spring HTTP/validation annotations
+and behavior, and the two Java example-constant holders were removed.
+
+The initial two focused HTTP contract/example tests passed with their existing
+assertions intact. Packaged-document comparison then exposed Springdoc pruning
+hidden response models before customization. Registration moved after applying
+the documentation and uses the generated document's OpenAPI dialect. Reference
+checks added to both existing HTTP tests also caught a missing nested
+FieldViolation schema; registration now includes referenced models with readAll.
+No assertions were removed or weakened. Final `./mvnw -B -ntp spotless:apply`
+and `./mvnw -B -ntp verify` passed all 71 tests with zero failures/errors/skips,
+plus Spotless and Checkstyle. The two focused contract/example tests also passed.
+A temporary Python harness ran both rebuilt executable JARs against isolated
+in-memory databases and compared their generated OpenAPI with the pre-refactor
+snapshots. Paths, methods, operation metadata, parameters, response codes,
+payload examples and every pre-existing DTO schema matched, normalizing only
+prose's trailing newlines. ERP additionally infers an unused InvoiceResponse
+interface schema; endpoint response schemas still reference the concrete types.
+All temporary JVMs stopped; no existing application processes were changed.
+CodeGraph was resynchronized and reported a current index; git diff --check
+passed. No browser/Docker or real Stripe checks were rerun for this extraction.
+No sub-agents, new dependencies, publication or global agent configuration
+changes were involved.
+
+## Persistent Swagger fixtures — 2026-10-26
+
+The user requested populated databases and valid IDs for Swagger examples.
+Codex inspected the running applications read-only: only an earlier unrelated
+fixture existed, and glue work reported STRIPE_NOT_CONFIGURED. The existing
+offline demo, HTTP contracts, provider adapter, reconciliation and persistence
+paths were inspected; CodeGraph status/exploration complemented direct reads.
+The fde-implement-slice skill guided this local demo slice.
+
+Implemented a repeatable persistent demo launcher using separate file databases
+and ports, public HTTP APIs for additive seeding, and the real worker/reconciler
+against a shared read-only local Stripe fixture. Added a guarded Swagger-only
+profile that selects an existing reconciliation ID and signs synthetic webhook
+requests in the browser. Demo-specific prose/examples remain in YAML/JS resources.
+Reserved distinct creation IDs so prepopulation does not immediately conflict
+with POST /invoices; retained duplicate-creation 409 and normal ETag/idempotency
+semantics. Existing application processes/databases remain untouched.
+
+Verification and any corrections are recorded below after execution. No
+sub-agents, real Stripe access, new dependencies, publication or global settings
+changes are involved.
+
+Final Maven formatting/verification passed 73 tests (9 ERP, 64 glue), with zero
+failures/errors/skips and clean Spotless/Checkstyle gates. The two new tests check
+profile credential/provider restrictions; the existing default-profile HTTP
+contract test verifies the browser signer is absent. The packaged Swagger check
+passed every endpoint plus actual response-example run/attempt ID validation,
+signature rejection/deduplication, reseeding, file restart, manual-edit
+preservation and reset recovery. Its first attempt caught a count snapshot
+before the newly-created invoice converged; it now waits for that invoice's
+DONE state before asserting stable counts. Restoring a missing fixture after ERP
+reset also explicitly requeues its held work, while existing edited invoices
+remain held. No acceptance assertion was removed.
+
+The existing offline packaged demo passed with the shared strict provider stub:
+10 invoices in 10.844 seconds, missed-first-webhook/late-refund/restart recovery
+passed, final counts 11 invoices, 11 projections and 12 effects. A Node.js VM
+executed the actual generated Swagger initializer/WebCrypto hook and delivered
+its exact formatted body to the running demo: recorded/200, duplicate/200;
+external destinations were left unsigned. The existing Air preview rejected
+navigation to another port, so no rendered-browser success is claimed.
+
+Stopped/restarted only this turn's persistent demo processes on the same
+database files/ports. An immediate restart exposed TIME_WAIT in the preliminary
+port probe; using SO_REUSEADDR to match Tomcat fixed that false rejection. An
+occupied-port invocation still failed without starting children. The running
+demo retained four invoices, two projections and two financial updates. Initial
+application processes were never targeted for shutdown or their data reset.
+Python compilation, final CodeGraph sync/current status and git diff --check
+passed. Temporary checks cleaned up their own data/processes; the persistent
+demo remains running for the user. No real Stripe or Docker checks were run.
+
+## Commit and push requested by the user — 2026-10-26
+
+The user explicitly authorized committing and pushing the Swagger documentation
+and seeded demo updates to main. Codex checked the working tree and fetched
+origin/main before preparing the commit. Reviewed the existing successful
+verification evidence: 73 Maven tests, formatting/import/braces gates, the
+packaged Swagger endpoint/restart check and the offline synchronization demo.
+No application code changed during publication, so those suites were not rerun.
+Checked the final diff and excluded ignored local databases, logs and credentials
+from the commit. Push completion is reported after the remote operation succeeds.

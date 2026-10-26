@@ -89,7 +89,27 @@ class ErpApiTest {
   @Test
   void generatedContractDescribesActualSuccessAndFailureResponses() throws Exception {
     JsonNode document = json.readTree(http.getForObject("/v3/api-docs", String.class));
+    for (JsonNode reference : document.findValues("$ref")) {
+      assertThat(document.at(reference.asText().substring(1)).isMissingNode())
+          .as("OpenAPI reference %s resolves", reference.asText())
+          .isFalse();
+    }
     JsonNode paths = document.path("paths");
+    for (JsonNode path : paths) {
+      for (JsonNode operation : path) {
+        assertThat(operation.path("description").asText()).isNotBlank();
+        for (JsonNode response : operation.path("responses")) {
+          for (JsonNode media : response.path("content")) {
+            assertThat(media.path("examples").isEmpty())
+                .as("%s: %s", operation.path("summary"), media)
+                .isFalse();
+            for (JsonNode example : media.path("examples")) {
+              assertThat(example.path("value").isObject()).isTrue();
+            }
+          }
+        }
+      }
+    }
     JsonNode createResponses = paths.path("/invoices").path("post").path("responses");
     assertThat(createResponses.has("201")).isTrue();
     assertThat(createResponses.has("200")).isFalse();
@@ -119,6 +139,83 @@ class ErpApiTest {
     assertThat(put("stale", "\"0\"", PAID).getStatusCode().value()).isEqualTo(412);
     assertThat(put("invalid", "\"1\"", PAID.replace("USD", "EUR")).getStatusCode().value())
         .isEqualTo(422);
+
+    // Execute the generated Swagger examples, including replay with the original ETag.
+    http.postForEntity("/demo/reset", null, Void.class);
+    JsonNode createExample =
+        paths
+            .path("/invoices")
+            .path("post")
+            .path("requestBody")
+            .path("content")
+            .path("application/json")
+            .path("examples")
+            .path("Linked USD invoice")
+            .path("value");
+    var headers = new HttpHeaders();
+    headers.setContentType(MediaType.APPLICATION_JSON);
+    var created =
+        http.postForEntity(
+            "/invoices", new HttpEntity<>(createExample.toString(), headers), String.class);
+    assertThat(created.getStatusCode().value()).isEqualTo(201);
+    assertThat(json.readTree(created.getBody()))
+        .isEqualTo(
+            createResponses
+                .path("201")
+                .path("content")
+                .path("application/json")
+                .path("examples")
+                .path("Unpaid invoice")
+                .path("value"));
+    // Projection examples operate on the separately prepopulated inv_demo fixture.
+    reset();
+    JsonNode projectionExamples =
+        paths
+            .path("/invoices/{invoiceId}/payment-projection")
+            .path("put")
+            .path("requestBody")
+            .path("content")
+            .path("application/json")
+            .path("examples");
+    String paidExample = projectionExamples.path("Paid").path("value").toString();
+    JsonNode projectionParameters =
+        paths.path("/invoices/{invoiceId}/payment-projection").path("put").path("parameters");
+    String exampleVersion = null;
+    for (JsonNode parameter : projectionParameters) {
+      if (parameter.path("name").asText().equals("If-Match")) {
+        exampleVersion = parameter.path("example").asText();
+      }
+    }
+    assertThat(exampleVersion).isEqualTo(created.getHeaders().getETag()).isEqualTo("\"1\"");
+    var paid = put("demo-paid-v1", exampleVersion, paidExample);
+    assertThat(paid.getStatusCode().value()).isEqualTo(200);
+    assertThat(json.readTree(paid.getBody()))
+        .isEqualTo(
+            projectionResponses
+                .path("200")
+                .path("content")
+                .path("application/json")
+                .path("examples")
+                .path("Paid invoice")
+                .path("value"));
+    assertThat(put("demo-paid-v1", created.getHeaders().getETag(), paidExample).getBody())
+        .isEqualTo(paid.getBody());
+    var refunded =
+        put(
+            "demo-refunded-v1",
+            paid.getHeaders().getETag(),
+            projectionExamples.path("Refunded").path("value").toString());
+    assertThat(refunded.getStatusCode().value()).isEqualTo(200);
+    assertThat(json.readTree(refunded.getBody()))
+        .isEqualTo(
+            projectionResponses
+                .path("200")
+                .path("content")
+                .path("application/json")
+                .path("examples")
+                .path("Refunded invoice")
+                .path("value"));
+    assertThat(http.getForObject("/demo/state", DemoState.class)).isEqualTo(new DemoState(1, 1, 2));
   }
 
   @Test

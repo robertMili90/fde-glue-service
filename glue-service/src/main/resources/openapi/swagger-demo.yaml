@@ -1,0 +1,60 @@
+info:
+  description: |-
+    **Ready-to-run offline demo — persistent seeded databases, no Stripe account needed.**
+
+    | ERP invoice | Local PaymentIntent | Initial result |
+    | --- | --- | --- |
+    | inv_demo | pi_demo | PAID; work DONE, with attempts |
+    | inv_refunded | pi_refunded | REFUNDED; work DONE |
+    | inv_unpaid | pi_unpaid | UNPAID; work WAITING_PROVIDER |
+    | inv_review | pi_review | UNPAID; work NEEDS_REVIEW (amount mismatch) |
+
+    GET endpoints and requeue use existing IDs. The reconciliation ID example is selected
+    from this database. Glue GET response examples show current database snapshots,
+    including existing attempt/run IDs. POST /operations/reconciliations takes no body;
+    poll the returned ID.
+    Swagger automatically signs webhook requests with a public local-demo secret. Leave
+    the prefilled signature field unchanged. Payment succeeded observes pi_demo; Refund
+    updated observes pi_refunded. Repeated event IDs return duplicate; notifications never
+    create Stripe payments or refunds. Work and attempts come from the real synchronization
+    pipeline using a read-only local Stripe fixture.
+
+    ERP Swagger is on the companion demo ERP port (18081 by default). Its default Paid
+    projection request is an idempotent replay of the seeded operation. POST /invoices
+    reserves inv_create / pi_create for a new invoice, so its first request returns 201;
+    repeating it returns the documented 409. Refund writes require a new idempotency key
+    and the current quoted ETag. Manual ERP writes do not change provider facts; a later
+    reconciliation can correctly hold a conflict for review.
+
+    Fault controls deliberately change later write behavior. POST /demo/reset deliberately
+    empties the ERP; restart the demo command to restore missing fixtures. Restart preserves
+    existing records and edits. Error response examples describe expected failures, not
+    additional successful requests. These synthetic IDs exist only in this offline demo.
+paths:
+  /webhooks/stripe:
+    post:
+      description: |-
+        **Offline demo:** Swagger signs the final request body automatically. Keep the
+        prefilled Stripe-Signature field unchanged. The Payment succeeded example observes
+        the seeded pi_demo payment. The Refund updated example observes pi_refunded, whose
+        full successful refund already exists in the local read-only provider fixture.
+        The worker retrieves those current provider facts and updates the linked ERP invoice.
+        An event is only a notification; posting one never creates a payment or refund.
+        Repeated event IDs return duplicate. A 200 receipt confirms durable acceptance,
+        not synchronization completion; inspect work and attempts afterwards.
+      requestBody:
+        content:
+          application/json:
+            examples:
+              Refund updated:
+                value:
+                  id: evt_refund_demo
+                  object: event
+                  type: refund.updated
+                  livemode: false
+                  data:
+                    object:
+                      id: re_pi_refunded
+                      object: refund
+                      payment_intent: pi_refunded
+                      livemode: false

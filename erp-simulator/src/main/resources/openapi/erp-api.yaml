@@ -1,0 +1,657 @@
+# Swagger documentation overlay. Routes and DTO schemas are generated from Java.
+# Edit descriptions, parameters and examples here; keep response codes aligned with HTTP behavior.
+info:
+  title: "ERP simulator"
+  description: |-
+    Local fictional ERP with its own persistent database. Owns invoice identity,
+    expected amount/currency and the unique Stripe PaymentIntent association.
+    All amounts are integer minor units with explicit uppercase currency; 1200 USD
+    means USD 12.00. The API writes ERP facts and never charges or refunds Stripe.
+
+    **ERP-only walkthrough (no Stripe credentials needed)**
+    The persistent offline demo (`python3 scripts/swagger-demo.py`) prepopulates inv_demo
+    linked to pi_demo, plus refunded, unpaid and review fixtures. Its first Paid write is
+    already recorded with demo-paid-v1, so the default PUT is a successful idempotent replay.
+    GET endpoints use those existing IDs. POST /invoices uses separate inv_create / pi_create
+    IDs reserved for creation; its first call returns 201 and repeats return 409.
+
+    1. Outside the seeded demo, create inv_demo / pi_demo by editing the creation example.
+       The invoice starts UNPAID, version 1 and ETag `"1"`.
+    2. PUT /invoices/inv_demo/payment-projection with the Paid example,
+       Idempotency-Key `demo-paid-v1` and If-Match `"1"` including quotes.
+    3. Repeat the same request to see an idempotent replay. GET the invoice and
+       GET /demo/state; replay keeps both projection and committed-update counts unchanged.
+    4. Select the Refunded request example, use a new key `demo-refunded-v1` and
+       the latest invoice ETag (normally `"2"`). The invoice becomes REFUNDED.
+
+    Expand an endpoint and select **Try it out** to execute its examples. No local API
+    authentication is configured. The persistent demo uses a read-only local Stripe fixture.
+    Outside that demo, run the synthetic-reference walkthrough with glue stopped or against a
+    separate ERP database. For real sandbox synchronization, use a real Stripe test
+    PaymentIntent and link it before confirming it. Manual ERP updates never change Stripe
+    facts; reconciliation may hold a resulting mismatch for review. Demo fault
+    controls affect projection writes; /demo/reset deletes this simulator's local data.
+    Health and metrics are available separately under /actuator.
+  version: "0.1.0"
+tags:
+  - name: "Local demo controls"
+    description: "Inspect effects and configure persisted simulator failures for local demonstrations."
+  - name: "Invoices"
+    description: "Create linked fixtures, read invoice facts and apply absolute payment projections."
+paths:
+  "/invoices/{invoiceId}/payment-projection":
+    put:
+      tags:
+        - "Invoices"
+      summary: "Atomically upsert an absolute projection with replay before version checks"
+      description: |-
+        Writes absolute payment facts to an existing linked invoice; it does not create a
+        Stripe charge or refund. Choose the Paid example after fixture creation; the seeded
+        demo already records this key/body, so it replays successfully. Send
+        Content-Type: application/json, If-Match: "1" (including quotes), and a unique
+        Idempotency-Key such as demo-paid-v1. A successful first write returns version 2
+        and ETag "2". To demonstrate a full refund, choose Refunded, use If-Match: "2"
+        and a new key such as demo-refunded-v1; it returns version 3 and ETag "3".
+
+        Currency, PaymentIntent and collected amount must match the invoice. PAID requires
+        zero refunded minor units; REFUNDED requires refunded amount equal to collected amount.
+        Partial refunds and regression from REFUNDED to PAID return 422 without changing facts.
+        The update and idempotency outcome commit atomically. Repeating the same key/body
+        returns the stored result before checking If-Match or consuming demo faults, even if
+        that ETag is now stale. Reusing a key with a different invoice/body returns 409.
+        A different key with equivalent facts does not append another payment projection.
+
+        On 412, GET the invoice again, revalidate the facts, then retry with its current ETag.
+        On 503 or an ambiguous timeout, retry with the same key and body. Stored replay
+        responses describe that operation's result; GET the invoice for its latest state.
+      parameters:
+        - name: "invoiceId"
+          in: "path"
+          description: "Existing ERP invoice ID; inv_demo is prepopulated by the persistent demo. Otherwise create it first."
+          required: true
+          schema:
+            type: "string"
+          example: "inv_demo"
+        - name: "Idempotency-Key"
+          in: "header"
+          description: "Nonempty key (at most 255 characters) unique to this invoice/projection. Reuse for retries; choose a new key for different facts."
+          required: true
+          schema:
+            type: "string"
+          example: "demo-paid-v1"
+        - name: "If-Match"
+          in: "header"
+          description: "Quoted integer version from the invoice ETag, including both double quotes. Use \"2\" for the refund after a first paid write."
+          required: true
+          schema:
+            type: "string"
+          example: "\"1\""
+      requestBody:
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/PaymentProjection"
+            examples:
+              Paid:
+                description: "Paid"
+                value:
+                  paymentIntentId: "pi_demo"
+                  currency: "USD"
+                  amountCollectedMinor: 1200
+                  amountRefundedMinor: 0
+                  status: "PAID"
+              Refunded:
+                description: "Refunded"
+                value:
+                  paymentIntentId: "pi_demo"
+                  currency: "USD"
+                  amountCollectedMinor: 1200
+                  amountRefundedMinor: 1200
+                  status: "REFUNDED"
+        required: true
+      responses:
+        "200":
+          description: "Current state"
+          headers:
+            ETag:
+              description: "Quoted version of the committed result; normally \"2\" after the first paid write and \"3\" after a refund"
+              style: "simple"
+              schema:
+                type: "string"
+                example: "\"2\""
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/InvoiceView"
+              examples:
+                "Paid invoice":
+                  description: "Paid invoice"
+                  value:
+                    id: "inv_demo"
+                    expectedAmountMinor: 1200
+                    currency: "USD"
+                    paymentIntentId: "pi_demo"
+                    version: 2
+                    financialStatus: "PAID"
+                    paymentProjection:
+                      paymentIntentId: "pi_demo"
+                      currency: "USD"
+                      amountCollectedMinor: 1200
+                      amountRefundedMinor: 0
+                      status: "PAID"
+                "Refunded invoice":
+                  description: "Refunded invoice"
+                  value:
+                    id: "inv_demo"
+                    expectedAmountMinor: 1200
+                    currency: "USD"
+                    paymentIntentId: "pi_demo"
+                    version: 3
+                    financialStatus: "REFUNDED"
+                    paymentProjection:
+                      paymentIntentId: "pi_demo"
+                      currency: "USD"
+                      amountCollectedMinor: 1200
+                      amountRefundedMinor: 1200
+                      status: "REFUNDED"
+        "404":
+          description: "Resource was not found"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/InvoiceProblem"
+              examples:
+                Error:
+                  description: "Error"
+                  value:
+                    reasonCode: "INVOICE_NOT_FOUND"
+                    message: "INVOICE_NOT_FOUND"
+        "409":
+          description: "Idempotency key was reused with a different payload"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/InvoiceProblem"
+              examples:
+                Error:
+                  description: "Error"
+                  value:
+                    reasonCode: "IDEMPOTENCY_PAYLOAD_CONFLICT"
+                    message: "IDEMPOTENCY_PAYLOAD_CONFLICT"
+        "412":
+          description: "Stale invoice version; refresh and revalidate"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/InvoiceProblem"
+              examples:
+                Error:
+                  description: "Error"
+                  value:
+                    reasonCode: "STALE_INVOICE_VERSION"
+                    message: "STALE_INVOICE_VERSION"
+        "422":
+          description: "Incompatible financial projection"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/InvoiceProblem"
+              examples:
+                Error:
+                  description: "Error"
+                  value:
+                    reasonCode: "FINANCIAL_CONFLICT"
+                    message: "FINANCIAL_CONFLICT"
+        "503":
+          description: "Temporary failure before commit"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/InvoiceProblem"
+              examples:
+                Error:
+                  description: "Error"
+                  value:
+                    reasonCode: "TEMPORARY_FAILURE"
+                    message: "TEMPORARY_FAILURE"
+        "400":
+          description: "Invalid request"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/InvoiceProblem"
+              examples:
+                Error:
+                  description: "Error"
+                  value:
+                    reasonCode: "INVALID_REQUEST"
+                    message: "Request validation failed"
+  "/invoices":
+    get:
+      tags:
+        - "Invoices"
+      summary: "Enumerate linked invoices of every financial status"
+      description: |-
+        No request body. Start with GET /invoices?limit=20. The response contains items
+        and, on a non-final page, nextCursor. Pass nextCursor unchanged as cursor on the next
+        request; stop when nextCursor is absent. Treat tokens as opaque, not as invoice IDs,
+        and do not assume item ordering. An empty final result is {"items":[]}.
+        Includes UNPAID, PAID and REFUNDED invoices so reconciliation can find initial
+        missed notifications and later refunds. This is an ERP-linked scope, not all Stripe payments.
+      parameters:
+        - name: "cursor"
+          in: "query"
+          description: "Opaque nextCursor from the previous page; omit for the first page."
+          required: false
+          schema:
+            type: "string"
+            default: ""
+        - name: "limit"
+          in: "query"
+          description: "Page size from 1 to 100."
+          required: false
+          schema:
+            type: "string"
+            default: "100"
+            maximum: 100
+            minimum: 1
+          example: 20
+      responses:
+        "200":
+          description: "Current state"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/InvoicePage"
+              examples:
+                "Final page":
+                  description: "Final page"
+                  value:
+                    items:
+                      - id: "inv_demo"
+                        expectedAmountMinor: 1200
+                        currency: "USD"
+                        paymentIntentId: "pi_demo"
+                        version: 1
+                        financialStatus: "UNPAID"
+                "More pages":
+                  description: "More pages"
+                  value:
+                    items:
+                      - id: "inv_demo"
+                        expectedAmountMinor: 1200
+                        currency: "USD"
+                        paymentIntentId: "pi_demo"
+                        version: 1
+                        financialStatus: "UNPAID"
+                    nextCursor: "inv_demo"
+                Empty:
+                  description: "Empty"
+                  value:
+                    items: []
+        "400":
+          description: "Invalid request"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/InvoiceProblem"
+              examples:
+                Error:
+                  description: "Error"
+                  value:
+                    reasonCode: "INVALID_REQUEST"
+                    message: "Request validation failed"
+    post:
+      tags:
+        - "Invoices"
+      summary: "Create and link an unpaid fixture invoice"
+      description: |-
+        Creates an ERP-owned invoice at version 1 with financialStatus UNPAID and no
+        paymentProjection. Send the JSON example with a unique invoice ID and PaymentIntent
+        reference. IDs must be URL-safe ASCII (letters, digits, underscores, hyphens), at most
+        255 characters; payment references start with pi_. Currency is three uppercase letters;
+        amounts are positive integral minor units (1200 USD = USD 12.00).
+        A duplicate invoice ID or payment association returns 409, even with identical input.
+        For synchronization, create a real Stripe test PaymentIntent, link it here before
+        confirming it, and run both applications. The persistent offline demo provides pi_create
+        in its local provider fixture; this synthetic ID cannot be fetched from real Stripe. Save the returned ETag for updates.
+      requestBody:
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/CreateInvoice"
+            examples:
+              "Linked USD invoice":
+                description: "Linked USD invoice"
+                value:
+                  id: "inv_create"
+                  expectedAmountMinor: 1200
+                  currency: "USD"
+                  paymentIntentId: "pi_create"
+        required: true
+      responses:
+        "201":
+          description: "Created in UNPAID state"
+          headers:
+            ETag:
+              description: "Quoted integer invoice version"
+              style: "simple"
+              schema:
+                type: "string"
+                example: "\"1\""
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/InvoiceView"
+              examples:
+                "Unpaid invoice":
+                  description: "Unpaid invoice"
+                  value:
+                    id: "inv_create"
+                    expectedAmountMinor: 1200
+                    currency: "USD"
+                    paymentIntentId: "pi_create"
+                    version: 1
+                    financialStatus: "UNPAID"
+        "409":
+          description: "Conflicting invoice or payment association"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/InvoiceProblem"
+              examples:
+                Error:
+                  description: "Error"
+                  value:
+                    reasonCode: "BUSINESS_IDENTITY_CONFLICT"
+                    message: "BUSINESS_IDENTITY_CONFLICT"
+        "400":
+          description: "Invalid request"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/InvoiceProblem"
+              examples:
+                Error:
+                  description: "Error"
+                  value:
+                    reasonCode: "INVALID_REQUEST"
+                    message: "Request validation failed"
+  "/demo/reset":
+    post:
+      tags:
+        - "Local demo controls"
+      summary: "Clear this simulator data and faults"
+      description: |-
+        **Deletes all local simulator invoices, payment projections, stored idempotency results,
+        fault settings and the applied-update counter.** Send POST with no request body only
+        when intentionally starting a fresh local demo. 204 has no response body; GET /demo/state
+        then returns all zero counts. Does not reset glue work/history or touch Stripe resources.
+        Stop glue or isolate its ERP database when using synthetic fixtures/reset for a manual demo.
+      responses:
+        "204":
+          description: "Local simulator reset"
+        "400":
+          description: "Invalid request"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/InvoiceProblem"
+              examples:
+                Error:
+                  description: "Error"
+                  value:
+                    reasonCode: "INVALID_REQUEST"
+                    message: "Request validation failed"
+                    errors:
+                      - field: "remainingRequests"
+                        message: "must be greater than or equal to 1"
+  "/demo/faults":
+    post:
+      tags:
+        - "Local demo controls"
+      summary: "Configure a persisted local simulator fault"
+      description: |-
+        Configures the next N structurally valid projection writes with unseen idempotency keys.
+        Send one of the named JSON examples. remainingRequests defaults to 1 (range 1..1000);
+        delayMs defaults to 0 (range 0..10000). Configuration persists across simulator restart.
+        NONE clears active faults; omit remainingRequests rather than sending zero.
+
+        FAIL_BEFORE_WRITE returns 503 without a financial write. APPLY_THEN_DELAY commits
+        the invoice and idempotency result, then delays only the HTTP response; choose delayMs
+        above the caller timeout to demonstrate an ambiguous result and safe replay.
+        VERSION_CONFLICT increments the invoice version and returns 412; refresh its ETag.
+        Existing-key replay or changed-payload conflict is resolved first and does not consume
+        the counter. 204 has no response body. Trigger a projection write after configuring
+        the fault and inspect GET /demo/state and the invoice to observe its effect.
+      requestBody:
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/FaultRequest"
+            examples:
+              "Fail next two writes":
+                description: "Fail next two writes"
+                value:
+                  mode: "FAIL_BEFORE_WRITE"
+                  remainingRequests: 2
+              "Commit then delay":
+                description: "Commit then delay"
+                value:
+                  mode: "APPLY_THEN_DELAY"
+                  remainingRequests: 1
+                  delayMs: 3000
+              "Version conflict":
+                description: "Version conflict"
+                value:
+                  mode: "VERSION_CONFLICT"
+                  remainingRequests: 1
+              "Clear faults":
+                description: "Clear faults"
+                value:
+                  mode: "NONE"
+        required: true
+      responses:
+        "204":
+          description: "Fault configured"
+        "400":
+          description: "Invalid request"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/InvoiceProblem"
+              examples:
+                Error:
+                  description: "Error"
+                  value:
+                    reasonCode: "INVALID_REQUEST"
+                    message: "Request validation failed"
+                    errors:
+                      - field: "remainingRequests"
+                        message: "must be greater than or equal to 1"
+  "/invoices/{invoiceId}":
+    get:
+      tags:
+        - "Invoices"
+      summary: "Get an invoice"
+      description: |-
+        No request body. Returns ERP invoice facts, financialStatus and paymentProjection
+        when present. An UNPAID invoice omits paymentProjection. Save the quoted ETag response
+        header, for example "1", and send it unchanged as If-Match on a projection update.
+        The invoice response, rather than webhook receipt or scan completion, shows the
+        committed ERP financial result. Unknown invoice IDs return 404.
+      parameters:
+        - name: "invoiceId"
+          in: "path"
+          description: "Existing ERP invoice ID; inv_demo is prepopulated by the persistent demo. Otherwise create it first."
+          required: true
+          schema:
+            type: "string"
+          example: "inv_demo"
+      responses:
+        "200":
+          description: "Current state"
+          headers:
+            ETag:
+              description: "Quoted integer invoice version"
+              style: "simple"
+              schema:
+                type: "string"
+                example: "\"1\""
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/InvoiceView"
+              examples:
+                "Unpaid invoice":
+                  description: "Unpaid invoice"
+                  value:
+                    id: "inv_demo"
+                    expectedAmountMinor: 1200
+                    currency: "USD"
+                    paymentIntentId: "pi_demo"
+                    version: 1
+                    financialStatus: "UNPAID"
+        "404":
+          description: "Resource was not found"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/InvoiceProblem"
+              examples:
+                Error:
+                  description: "Error"
+                  value:
+                    reasonCode: "INVOICE_NOT_FOUND"
+                    message: "INVOICE_NOT_FOUND"
+        "400":
+          description: "Invalid request"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/InvoiceProblem"
+              examples:
+                Error:
+                  description: "Error"
+                  value:
+                    reasonCode: "INVALID_REQUEST"
+                    message: "Request validation failed"
+  "/invoices/by-payment/{paymentIntentId}":
+    get:
+      tags:
+        - "Invoices"
+      summary: "Find the invoice linked to a payment"
+      description: |-
+        No request body. Looks up the unique ERP invoice associated with a Stripe test
+        PaymentIntent, for example pi_demo. Returns the same representation and ETag as
+        the invoice-ID lookup; 404 means no invoice is linked. This endpoint does not
+        discover unlinked Stripe payments or create an association.
+      parameters:
+        - name: "paymentIntentId"
+          in: "path"
+          description: "Stripe test PaymentIntent already linked to an ERP invoice."
+          required: true
+          schema:
+            type: "string"
+          example: "pi_demo"
+      responses:
+        "200":
+          description: "Current state"
+          headers:
+            ETag:
+              description: "Quoted integer invoice version"
+              style: "simple"
+              schema:
+                type: "string"
+                example: "\"1\""
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/InvoiceView"
+              examples:
+                "Unpaid invoice":
+                  description: "Unpaid invoice"
+                  value:
+                    id: "inv_demo"
+                    expectedAmountMinor: 1200
+                    currency: "USD"
+                    paymentIntentId: "pi_demo"
+                    version: 1
+                    financialStatus: "UNPAID"
+        "404":
+          description: "Resource was not found"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/InvoiceProblem"
+              examples:
+                Error:
+                  description: "Error"
+                  value:
+                    reasonCode: "INVOICE_NOT_FOUND"
+                    message: "INVOICE_NOT_FOUND"
+        "400":
+          description: "Invalid request"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/InvoiceProblem"
+              examples:
+                Error:
+                  description: "Error"
+                  value:
+                    reasonCode: "INVALID_REQUEST"
+                    message: "Request validation failed"
+  "/demo/state":
+    get:
+      tags:
+        - "Local demo controls"
+      summary: "Inspect invoice and effect counts"
+      description: |-
+        No request body. invoiceCount is the number of local invoices;
+        paymentProjectionCount counts invoices with a financial projection;
+        appliedUpdateCount counts committed changes to financial projections since reset.
+        After one paid write, counts are 1/1/1. An identical replay keeps those counts.
+        A subsequent full refund keeps one projection and increments appliedUpdateCount to 2.
+        This endpoint does not expose the remaining fault counter or Stripe/glue state.
+      responses:
+        "200":
+          description: "Current state"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/DemoState"
+              examples:
+                "After paid write or replay":
+                  description: "After paid write or replay"
+                  value:
+                    invoiceCount: 1
+                    paymentProjectionCount: 1
+                    appliedUpdateCount: 1
+                "After full refund":
+                  description: "After full refund"
+                  value:
+                    invoiceCount: 1
+                    paymentProjectionCount: 1
+                    appliedUpdateCount: 2
+                "Empty simulator":
+                  description: "Empty simulator"
+                  value:
+                    invoiceCount: 0
+                    paymentProjectionCount: 0
+                    appliedUpdateCount: 0
+        "400":
+          description: "Invalid request"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/InvoiceProblem"
+              examples:
+                Error:
+                  description: "Error"
+                  value:
+                    reasonCode: "INVALID_REQUEST"
+                    message: "Request validation failed"
+                    errors:
+                      - field: "remainingRequests"
+                        message: "must be greater than or equal to 1"

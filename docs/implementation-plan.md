@@ -279,3 +279,100 @@ fault/requeue controls and opted-in reset were not executed through this collect
 Maven was not rerun: these changes affect only Postman artifacts/documentation;
 the smoke used previously built executable JARs. The pre-existing local edit in
 the glue application entry point was left untouched.
+
+## Swagger endpoint documentation — 2026-10-26
+
+Both applications' Swagger pages now include a usage walkthrough and explicit
+descriptions, path/query/header guidance, named request/response JSON examples,
+error examples, pagination and bodyless-operation semantics. The webhook page
+explains exact-body signing and receipt versus completed synchronization. ERP
+examples demonstrate create, PAID, identical replay, full REFUNDED, all fault
+modes and the scope of local reset. Runtime synchronization behavior is unchanged.
+
+The existing HTTP contract tests execute generated ERP example payloads, compare
+their responses, send the generated quoted If-Match header, and sign/deliver both
+generated webhook examples with duplicate receipts and REFUNDED convergence.
+`./mvnw -B -ntp spotless:apply` passed. Final `./mvnw -B -ntp verify` passed all
+71 tests, zero failures/errors/skips, plus formatting and Checkstyle. Browser
+inspection confirmed the rendered ERP walkthrough, endpoint descriptions and
+named request/response selectors. It exposed quote stripping in the If-Match
+parameter example, which was corrected and verified by the final HTTP tests
+and packaged application's generated document. No real Stripe or Docker checks
+were needed for this documentation change; all provider checks used local stubs.
+
+## Swagger documentation extraction — 2026-10-26
+
+Moved Swagger prose, parameter documentation, request/response examples and
+status metadata out of all four controllers and into the module-local
+[glue documentation](../glue-service/src/main/resources/openapi/glue-api.yaml)
+and [ERP documentation](../erp-simulator/src/main/resources/openapi/erp-api.yaml).
+Small OpenAPI customizers apply this documentation to discovered routes while
+DTO schemas continue to come from Java models. Documented endpoints must exist;
+the HTTP contract tests also check that all schema references resolve.
+The two Java example-constant holders were removed. Controller methods retain
+their Spring mappings, request validation and HTTP behavior. The README now
+identifies the documentation resources and editing workflow.
+
+Verification: the two focused HTTP contract/example tests passed, followed by
+`./mvnw -B -ntp spotless:apply` and final `./mvnw -B -ntp verify`: 71 tests passed,
+zero failures/errors/skips, with Spotless and Checkstyle passing. A packaged-JAR
+comparison harness verified both generated documents against snapshots taken
+before extraction: paths/methods, metadata, parameters, statuses, payload examples
+and all pre-existing DTO schemas match, ignoring only trailing newlines in prose.
+It used isolated in-memory databases and temporary ports, then stopped its JVMs.
+CodeGraph index synchronization/status and git diff --check passed. No browser,
+real Stripe or Docker rerun was needed for this extraction.
+
+## Persistent seeded Swagger demo — 2026-10-26
+
+Added `python3 scripts/swagger-demo.py`: a running local Swagger environment on
+ports 18080/18081 with separate persistent H2 files under data/swagger-demo.
+It adds missing fixtures through ERP HTTP APIs and requests reconciliation;
+ordinary workers create actual attempts and synchronization outcomes. Four
+fixtures cover paid, fully refunded, waiting-provider and amount-conflict states.
+The shared read-only Stripe fixture returns only registered synthetic payments;
+real Stripe access and credentials are unnecessary. Existing applications on
+8080/8081 and their databases are not changed.
+
+The explicit swagger-demo profile installs a synthetic browser signer, selects
+a real reconciliation parameter ID, and supplies current glue response snapshots
+with actual work/attempt/run identities. It rejects other credentials or a remote
+provider. Ordinary Swagger startup excludes this signer. Documentation remains
+in resources. Invoice creation uses reserved inv_create/pi_create IDs; the seeded
+Paid PUT replays demo-paid-v1. Duplicate creation, quoted ETags, new refund keys,
+fault effects and destructive reset retain their documented semantics. Repeated
+seeding retains existing invoice edits; restoring missing ERP fixtures after a
+reset explicitly requeues their held work without releasing unrelated records.
+
+The packaged check `python3 scripts/swagger-demo.py --check` uses temporary
+ports/databases and exercises every documented endpoint, signature rejection,
+deduplication, repeated seeding, both JVM restarts with file persistence,
+preservation of a manual refund, and reset/reseeding. An initial count assertion
+ran before the newly-created invoice finished synchronizing; the check now waits
+for that invoice's DONE state before recording stable counts. No financial or
+reliability assertion was removed. Final command results are recorded below.
+
+Executed verification:
+
+- `./mvnw -B -ntp spotless:apply` and final `./mvnw -B -ntp verify` passed:
+  73 tests (ERP 9, glue 64), zero failures/errors/skips; Spotless/Checkstyle passed.
+  Two new tests verify the demo rejects other credentials and a remote provider;
+  the default-profile HTTP test also verifies the signer is absent.
+- Final `python3 scripts/swagger-demo.py --check` passed, including lookup of every
+  run ID in response examples and checking example attempt IDs exist. It stopped
+  its own JVMs and removed temporary data.
+- `python3 scripts/demo-offline.py` passed after extracting the shared provider
+  fixture: 10-invoice burst in 10.844 seconds, missed first webhook, late refund
+  and persisted retry after JVM restart; final 11/11/12 counts.
+- Node.js VM executed the generated Swagger initializer and its installed
+  WebCrypto signing hook against the running demo. First delivery returned
+  recorded/200, replay duplicate/200; an external URL received no signature.
+  This was a JavaScript/runtime HTTP check, not a rendered-browser check: the
+  existing Air preview was restricted to its earlier application's port.
+- The persistent runner was stopped/restarted on the same files and ports.
+  An initial port probe rejected TIME_WAIT after shutdown; matching Tomcat's
+  SO_REUSEADDR behavior fixed immediate restarts. A separate invocation against
+  occupied demo ports still failed before starting children. Final invoice,
+  projection and effect counts remained 4/2/2, and the demo was left running.
+- Python compilation, CodeGraph synchronization/current-index status and
+  `git diff --check` passed. No real Stripe or Docker check was required or run.

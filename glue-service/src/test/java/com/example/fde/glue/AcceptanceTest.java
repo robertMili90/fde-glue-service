@@ -545,7 +545,30 @@ class AcceptanceTest {
   @Test
   void generatedOperationsContractMatchesQueuedResponsesAndWebhookObjectBody() throws Exception {
     JsonNode document = get(glueUrl(), "/v3/api-docs");
+    for (JsonNode reference : document.findValues("$ref")) {
+      assertThat(document.at(reference.asText().substring(1)).isMissingNode())
+          .as("OpenAPI reference %s resolves", reference.asText())
+          .isFalse();
+    }
     JsonNode paths = document.path("paths");
+    for (JsonNode path : paths) {
+      for (JsonNode operation : path) {
+        assertThat(operation.path("description").asText()).isNotBlank();
+        for (JsonNode parameter : operation.path("parameters")) {
+          assertThat(parameter.path("description").asText()).isNotBlank();
+        }
+        for (JsonNode response : operation.path("responses")) {
+          for (JsonNode media : response.path("content")) {
+            assertThat(media.path("examples").isEmpty())
+                .as("%s: %s", operation.path("summary"), media)
+                .isFalse();
+            for (JsonNode example : media.path("examples")) {
+              assertThat(example.path("value").isContainerNode()).isTrue();
+            }
+          }
+        }
+      }
+    }
     assertThat(paths.path("/operations/reconciliations").path("post").path("responses").has("202"))
         .isTrue();
     assertThat(paths.path("/operations/reconciliations").path("post").path("responses").has("200"))
@@ -575,6 +598,57 @@ class AcceptanceTest {
     worker().tick();
     assertThat(request(glueUrl(), "POST", "/operations/work/pi_requeue/requeue", null).statusCode())
         .isEqualTo(202);
+
+    assertThat(request(glueUrl(), "GET", "/swagger-ui/swagger-initializer.js", null).body())
+        .doesNotContain("fdeDemoSign", "whsec_offline_demo");
+
+    // Sign the actual Swagger request examples and verify receipts and current-fact effects.
+    stripeFailure = 0;
+    worker().tick();
+    fixture("inv_demo", "pi_demo");
+    JsonNode examples =
+        webhook.path("requestBody").path("content").path("application/json").path("examples");
+    for (String name : List.of("Payment succeeded", "Refund updated")) {
+      if (name.equals("Refund updated")) {
+        payments.put(
+            "pi_demo", Payment.paid().refunds(new Refund("re_demo", 1200, "succeeded", "usd")));
+      }
+      String body = examples.path(name).path("value").toString();
+      var delivery =
+          HttpRequest.newBuilder(URI.create(glueUrl() + "/webhooks/stripe"))
+              .header("Content-Type", "application/json")
+              .header(
+                  "Stripe-Signature",
+                  Webhook.Signature.generateSignatureHeader(
+                      body, SECRET, TIME.instant().getEpochSecond()))
+              .POST(HttpRequest.BodyPublishers.ofString(body))
+              .build();
+      var receipt = http.send(delivery, HttpResponse.BodyHandlers.ofString());
+      assertThat(receipt.statusCode()).isEqualTo(200);
+      assertThat(json.readTree(receipt.body()))
+          .isEqualTo(
+              webhook
+                  .path("responses")
+                  .path("200")
+                  .path("content")
+                  .path("application/json")
+                  .path("examples")
+                  .path("Recorded")
+                  .path("value"));
+      assertThat(json.readTree(http.send(delivery, HttpResponse.BodyHandlers.ofString()).body()))
+          .isEqualTo(
+              webhook
+                  .path("responses")
+                  .path("200")
+                  .path("content")
+                  .path("application/json")
+                  .path("examples")
+                  .path("Duplicate")
+                  .path("value"));
+      worker().tick();
+    }
+    assertThat(get(erpUrl(), "/invoices/inv_demo").path("financialStatus").asText())
+        .isEqualTo("REFUNDED");
   }
 
   @Test

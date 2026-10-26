@@ -1,0 +1,594 @@
+# Swagger documentation overlay. Routes and DTO schemas are generated from Java.
+# Edit descriptions, parameters and examples here; keep response codes aligned with HTTP behavior.
+info:
+  title: "Glue service operations"
+  description: |-
+    Synchronizes current Stripe test payment/refund facts into pre-linked ERP invoices.
+    Runs separately from the ERP simulator (default localhost:8081).
+
+    **Typical workflow**
+    1. Create a Stripe test PaymentIntent, then create its linked invoice using the ERP API.
+    2. Confirm the test payment and forward signed notifications to POST /webhooks/stripe,
+       or POST /operations/reconciliations with no body to discover linked references.
+    3. Poll GET /operations/work/{paymentIntentId} and its /attempts endpoint.
+    4. Read the ERP invoice to verify PAID or REFUNDED facts. Investigate NEEDS_REVIEW
+       or FAILED, fix the cause, then POST the work item's /requeue endpoint with no body.
+
+    Expand an endpoint to see its usage and named JSON examples. Use **Try it out**
+    to fill path/query/header values and execute requests against this running instance.
+    Webhooks require a newly computed Stripe-Signature; their header example is a placeholder.
+    Other local demo endpoints have no authentication. All example IDs/timestamps are
+    illustrative; replace them with IDs returned by your run. HTTP 200 webhook receipts
+    and HTTP 202 queued operations do not confirm an ERP write. SYNC_ENABLED=false pauses
+    scheduled work. Health and metrics are available separately under /actuator.
+  version: "0.1.0"
+tags:
+  - name: "Synchronization operations"
+    description: "Inspect durable work, release held jobs, and request linked-invoice reconciliation."
+  - name: "Stripe webhooks"
+    description: "Signed test-mode notifications enqueue durable synchronization work."
+paths:
+  "/webhooks/stripe":
+    post:
+      tags:
+        - "Stripe webhooks"
+      summary: "Verify and durably accept a Stripe test event"
+      description: |-
+        Receives Stripe snapshot events. Supported types: payment_intent.succeeded,
+        payment_intent.payment_failed, refund.created, refund.updated and refund.failed.
+        The examples are minimal notification envelopes; the worker retrieves current
+        PaymentIntent/refund resources from Stripe rather than trusting event money fields.
+        Replace pi_demo with an existing test PaymentIntent linked to an ERP invoice.
+
+        **Signing:** configure STRIPE_WEBHOOK_SECRET locally. Stripe CLI forwarding or the
+        Postman collection can sign deliveries. For a manual request, compute the hex HMAC-SHA256
+        of `<current Unix timestamp>.<exact raw JSON body>` using that webhook secret, then send
+        `Stripe-Signature: t=<timestamp>,v1=<hex digest>`. The SDK uses a 300-second timestamp
+        tolerance. Sign the final bytes, including whitespace; the displayed header is a
+        placeholder and cannot be sent unchanged. Use Content-Type: application/json.
+
+        **Receipt:** recorded means event identity and work committed atomically; duplicate
+        means the event ID was already recorded; ignored means a valid unsupported event type.
+        None confirms an ERP update. Poll GET /operations/work/{paymentIntentId}, inspect
+        attempts, then check the ERP invoice. Live-mode events/resources are rejected.
+        On 503 retry delivery with the same event ID and a fresh valid signature.
+      parameters:
+        - name: "Stripe-Signature"
+          in: "header"
+          description: "Required Stripe signature over the exact body, using a current Unix timestamp and the configured webhook secret. Replace both placeholders."
+          required: true
+          schema:
+            type: "string"
+          example: "t=<current_unix_seconds>,v1=<computed_hex_hmac_sha256>"
+      requestBody:
+        content:
+          "application/json":
+            schema:
+              type: "object"
+              description: "Stripe snapshot event object; signature is computed over the exact raw body"
+            examples:
+              "Payment succeeded":
+                description: "Payment succeeded"
+                value:
+                  id: "evt_demo"
+                  object: "event"
+                  type: "payment_intent.succeeded"
+                  livemode: false
+                  data:
+                    object:
+                      id: "pi_demo"
+                      object: "payment_intent"
+                      livemode: false
+              "Refund updated":
+                description: "Refund updated"
+                value:
+                  id: "evt_refund_demo"
+                  object: "event"
+                  type: "refund.updated"
+                  livemode: false
+                  data:
+                    object:
+                      id: "re_demo"
+                      object: "refund"
+                      payment_intent: "pi_demo"
+                      livemode: false
+        required: true
+      responses:
+        "200":
+          description: "Recorded, duplicate or safely ignored event"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/Receipt"
+              examples:
+                Recorded:
+                  description: "Recorded"
+                  value:
+                    status: "recorded"
+                Duplicate:
+                  description: "Duplicate"
+                  value:
+                    status: "duplicate"
+                Ignored:
+                  description: "Ignored"
+                  value:
+                    status: "ignored"
+        "400":
+          description: "Invalid signature, event or test-mode reference"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ApiProblem"
+              examples:
+                Error:
+                  description: "Error"
+                  value:
+                    reasonCode: "INVALID_WEBHOOK"
+                    message: "Webhook signature or JSON body is invalid"
+        "503":
+          description: "Verification unavailable or durable acceptance failed; retry delivery"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ApiProblem"
+              examples:
+                "Verification not configured":
+                  description: "Verification not configured"
+                  value:
+                    reasonCode: "WEBHOOK_NOT_CONFIGURED"
+                    message: "Stripe webhook verification is not configured"
+                "Storage unavailable":
+                  description: "Storage unavailable"
+                  value:
+                    reasonCode: "PERSISTENCE_UNAVAILABLE"
+                    message: "Webhook could not be persisted; retry delivery"
+  "/operations/work/{paymentIntentId}/requeue":
+    post:
+      tags:
+        - "Synchronization operations"
+      summary: "Release a held job and reset its retry budget"
+      description: |-
+        Send POST with no request body after resolving the cause shown in reasonCode/facts.
+        Only NEEDS_REVIEW or FAILED work is changed: it becomes READY with OPERATOR_REQUEUE,
+        transientFailures resets to zero and requestedGeneration increases. Attempt history
+        remains available. Existing work in any other state is returned unchanged with 202.
+        Unknown work returns 404. This queues a fresh current-resource observation;
+        it does not perform an immediate ERP write. Poll the work endpoint for completion.
+      parameters:
+        - name: "paymentIntentId"
+          in: "path"
+          description: "Stripe test PaymentIntent ID identifying the durable work item."
+          required: true
+          schema:
+            type: "string"
+          example: "pi_demo"
+      responses:
+        "202":
+          description: "Work accepted for asynchronous processing"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/WorkView"
+              examples:
+                "Queued observation":
+                  description: "Queued observation"
+                  value:
+                    paymentIntentId: "pi_demo"
+                    state: "READY"
+                    requestedGeneration: 1
+                    completedGeneration: 0
+                    transientFailures: 0
+                    totalAttempts: 0
+                    nextEligibleAt: "2026-10-26T10:00:00Z"
+                    reasonCode: null
+                    invoiceId: null
+                    operationKey: null
+                    lastEventId: "evt_demo"
+                    facts: null
+                    createdAt: "2026-10-26T10:00:00Z"
+                    updatedAt: "2026-10-26T10:00:00Z"
+        "404":
+          description: "Resource was not found"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ApiProblem"
+              examples:
+                Error:
+                  description: "Error"
+                  value:
+                    reasonCode: "NOT_FOUND"
+                    message: "Work item was not found"
+        "400":
+          description: "Invalid request"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ApiProblem"
+              examples:
+                Error:
+                  description: "Error"
+                  value:
+                    reasonCode: "INVALID_REQUEST"
+                    message: "limit must be 1..100"
+  "/operations/reconciliations":
+    get:
+      tags:
+        - "Synchronization operations"
+      summary: "List reconciliation runs"
+      description: |-
+        No request body. Returns at most limit runs, newest startedAt first, as a JSON array.
+        An empty array means no runs have been requested. COMPLETE means all invoice pages
+        were enumerated and references requested; individual payment jobs may still be pending
+        or held. enqueuedReferences counts references visited, not successful ERP writes.
+      parameters:
+        - name: "limit"
+          in: "query"
+          description: "Maximum results to return (1 to 100)."
+          required: false
+          schema:
+            type: "string"
+            default: "100"
+            maximum: 100
+            minimum: 1
+          example: 20
+      responses:
+        "200":
+          description: "Current state"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/ReconciliationRunView"
+              examples:
+                "Recent scans":
+                  description: "Recent scans"
+                  value:
+                    - id: "a7e391e6-d780-4abe-bbfc-68a05a1b9570"
+                      state: "QUEUED"
+                      cursor: null
+                      enqueuedReferences: 0
+                      pagesProcessed: 0
+                      failedBatches: 0
+                      lastFailure: null
+                      startedAt: "2026-10-26T10:00:00Z"
+                      updatedAt: "2026-10-26T10:00:00Z"
+                      completedAt: null
+        "400":
+          description: "Invalid request"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ApiProblem"
+              examples:
+                Error:
+                  description: "Error"
+                  value:
+                    reasonCode: "INVALID_REQUEST"
+                    message: "limit must be 1..100"
+    post:
+      tags:
+        - "Synchronization operations"
+      summary: "Queue or resume linked-invoice enumeration"
+      description: |-
+        Send POST with no request body. Starts a new scan when there is no active scan or the
+        previous one is COMPLETE. Reuses an unfinished run and requeues a FAILED run from its
+        persisted cursor; repeated requests can return the same run ID and its current state.
+        Enumeration includes linked UNPAID, PAID and REFUNDED invoices, recovering the first
+        missing webhook and later refunds on older payments. It covers ERP references only.
+        202 acknowledges enumeration work, not payment synchronization. Poll the returned
+        run ID, then inspect payment work and ERP invoices. Held/failed payment jobs still
+        need explicit requeue. With SYNC_ENABLED=false, scheduled processing is paused.
+      responses:
+        "202":
+          description: "Enumeration accepted; payments synchronize asynchronously"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ReconciliationRunView"
+              examples:
+                "Queued scan":
+                  description: "Queued scan"
+                  value:
+                    id: "a7e391e6-d780-4abe-bbfc-68a05a1b9570"
+                    state: "QUEUED"
+                    cursor: null
+                    enqueuedReferences: 0
+                    pagesProcessed: 0
+                    failedBatches: 0
+                    lastFailure: null
+                    startedAt: "2026-10-26T10:00:00Z"
+                    updatedAt: "2026-10-26T10:00:00Z"
+                    completedAt: null
+        "400":
+          description: "Invalid request"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ApiProblem"
+              examples:
+                Error:
+                  description: "Error"
+                  value:
+                    reasonCode: "INVALID_REQUEST"
+                    message: "limit must be 1..100"
+  "/operations/work":
+    get:
+      tags:
+        - "Synchronization operations"
+      summary: "List durable work"
+      description: |-
+        Return a JSON array ordered by PaymentIntent ID, ascending. No request body.
+        Start with GET /operations/work?limit=20; for the next page pass the last returned
+        paymentIntentId as after. An empty array means there are no further items.
+        READY/RUNNING are pending, RETRY_SCHEDULED waits after a transient failure,
+        WAITING_PROVIDER waits for Stripe facts, NEEDS_REVIEW holds a business conflict,
+        and FAILED requires intervention. DONE means the latest observation finished;
+        inspect reasonCode because PAYMENT_CANCELED completes without an ERP write.
+        New notifications can request another pass even after DONE.
+      parameters:
+        - name: "after"
+          in: "query"
+          description: "Exclusive last paymentIntentId from the previous page; omit for the first page."
+          required: false
+          schema:
+            type: "string"
+            default: ""
+          example: ""
+        - name: "limit"
+          in: "query"
+          description: "Maximum results to return (1 to 100)."
+          required: false
+          schema:
+            type: "string"
+            default: "100"
+            maximum: 100
+            minimum: 1
+          example: 20
+      responses:
+        "200":
+          description: "Current state"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/WorkView"
+              examples:
+                "Pending work":
+                  description: "Pending work"
+                  value:
+                    - paymentIntentId: "pi_demo"
+                      state: "READY"
+                      requestedGeneration: 1
+                      completedGeneration: 0
+                      transientFailures: 0
+                      totalAttempts: 0
+                      nextEligibleAt: "2026-10-26T10:00:00Z"
+                      reasonCode: null
+                      invoiceId: null
+                      operationKey: null
+                      lastEventId: "evt_demo"
+                      facts: null
+                      createdAt: "2026-10-26T10:00:00Z"
+                      updatedAt: "2026-10-26T10:00:00Z"
+                "No work":
+                  description: "No work"
+                  value: []
+        "400":
+          description: "Invalid request"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ApiProblem"
+              examples:
+                Error:
+                  description: "Error"
+                  value:
+                    reasonCode: "INVALID_REQUEST"
+                    message: "limit must be 1..100"
+  "/operations/work/{paymentIntentId}":
+    get:
+      tags:
+        - "Synchronization operations"
+      summary: "Inspect one work item"
+      description: |-
+        No request body. Use the PaymentIntent ID from Stripe or the work list.
+        Poll this endpoint after webhook acceptance or requeue to follow asynchronous progress.
+        requestedGeneration counts requested observations; completedGeneration records completed
+        work. totalAttempts is cumulative; transientFailures is the current retry budget usage.
+        nextEligibleAt is the earliest scheduled attempt time. reasonCode and facts explain the
+        last decision; nullable invoiceId/operationKey are populated when known.
+        facts is diagnostic text, not a nested JSON object. Check the ERP invoice to see its
+        financial status; a recorded webhook alone does not establish synchronization.
+      parameters:
+        - name: "paymentIntentId"
+          in: "path"
+          description: "Stripe test PaymentIntent ID identifying the durable work item."
+          required: true
+          schema:
+            type: "string"
+          example: "pi_demo"
+      responses:
+        "200":
+          description: "Current state"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/WorkView"
+              examples:
+                "Queued observation":
+                  description: "Queued observation"
+                  value:
+                    paymentIntentId: "pi_demo"
+                    state: "READY"
+                    requestedGeneration: 1
+                    completedGeneration: 0
+                    transientFailures: 0
+                    totalAttempts: 0
+                    nextEligibleAt: "2026-10-26T10:00:00Z"
+                    reasonCode: null
+                    invoiceId: null
+                    operationKey: null
+                    lastEventId: "evt_demo"
+                    facts: null
+                    createdAt: "2026-10-26T10:00:00Z"
+                    updatedAt: "2026-10-26T10:00:00Z"
+        "404":
+          description: "Resource was not found"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ApiProblem"
+              examples:
+                Error:
+                  description: "Error"
+                  value:
+                    reasonCode: "NOT_FOUND"
+                    message: "Work item was not found"
+        "400":
+          description: "Invalid request"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ApiProblem"
+              examples:
+                Error:
+                  description: "Error"
+                  value:
+                    reasonCode: "INVALID_REQUEST"
+                    message: "limit must be 1..100"
+  "/operations/work/{paymentIntentId}/attempts":
+    get:
+      tags:
+        - "Synchronization operations"
+      summary: "Inspect latest attempts"
+      description: |-
+        No request body. Returns at most limit attempts, newest first, as a JSON array.
+        Each attempt includes its generation, attempt number, timestamps, outcome and reason.
+        A RUNNING attempt has no finishedAt or result facts yet. INTERRUPTED records recovered
+        work after restart. An empty array is returned for a payment with no attempts,
+        including an unknown PaymentIntent ID; this endpoint does not return 404.
+      parameters:
+        - name: "paymentIntentId"
+          in: "path"
+          description: "Stripe test PaymentIntent ID identifying the durable work item."
+          required: true
+          schema:
+            type: "string"
+          example: "pi_demo"
+        - name: "limit"
+          in: "query"
+          description: "Maximum results to return (1 to 100)."
+          required: false
+          schema:
+            type: "string"
+            default: "100"
+            maximum: 100
+            minimum: 1
+          example: 20
+      responses:
+        "200":
+          description: "Current state"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/AttemptView"
+              examples:
+                "In progress":
+                  description: "In progress"
+                  value:
+                    - id: "1bfb6d37-694a-4c7b-a040-8c0d26b4ac11"
+                      generation: 1
+                      attemptNumber: 1
+                      startedAt: "2026-10-26T10:00:01Z"
+                      finishedAt: null
+                      outcome: "RUNNING"
+                      reasonCode: null
+                      invoiceId: null
+                      operationKey: null
+                      facts: null
+                "No attempts":
+                  description: "No attempts"
+                  value: []
+        "400":
+          description: "Invalid request"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ApiProblem"
+              examples:
+                Error:
+                  description: "Error"
+                  value:
+                    reasonCode: "INVALID_REQUEST"
+                    message: "limit must be 1..100"
+  "/operations/reconciliations/{id}":
+    get:
+      tags:
+        - "Synchronization operations"
+      summary: "Inspect a reconciliation run"
+      description: |-
+        No request body. Use the id returned by POST /operations/reconciliations.
+        QUEUED awaits processing; RUNNING enumerates; INCOMPLETE retains a cursor for the
+        next batch; FAILED retains lastFailure and checkpoint progress for investigation;
+        COMPLETE has reached the final page. pagesProcessed/enqueuedReferences are scan
+        progress, failedBatches is cumulative, and completedAt is null until COMPLETE.
+        cursor is an opaque checkpoint, not a payment ID. A complete run does not imply
+        every payment synchronized. POST /operations/reconciliations resumes a failed run.
+      parameters:
+        - name: "id"
+          in: "path"
+          description: "Reconciliation run ID returned by the trigger or list endpoint."
+          required: true
+          schema:
+            type: "string"
+          example: "a7e391e6-d780-4abe-bbfc-68a05a1b9570"
+      responses:
+        "200":
+          description: "Current state"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ReconciliationRunView"
+              examples:
+                "Queued scan":
+                  description: "Queued scan"
+                  value:
+                    id: "a7e391e6-d780-4abe-bbfc-68a05a1b9570"
+                    state: "QUEUED"
+                    cursor: null
+                    enqueuedReferences: 0
+                    pagesProcessed: 0
+                    failedBatches: 0
+                    lastFailure: null
+                    startedAt: "2026-10-26T10:00:00Z"
+                    updatedAt: "2026-10-26T10:00:00Z"
+                    completedAt: null
+        "404":
+          description: "Resource was not found"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ApiProblem"
+              examples:
+                Error:
+                  description: "Error"
+                  value:
+                    reasonCode: "NOT_FOUND"
+                    message: "Reconciliation run was not found"
+        "400":
+          description: "Invalid request"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ApiProblem"
+              examples:
+                Error:
+                  description: "Error"
+                  value:
+                    reasonCode: "INVALID_REQUEST"
+                    message: "limit must be 1..100"
