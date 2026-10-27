@@ -79,6 +79,7 @@ def main():
             log = open(directory / (module + ".log"), "a+")
             logs.append(log)
             processes[module] = subprocess.Popen(["java", "-jar", str(jars[module]),
+                "--spring.profiles.active=test",
                 "--stripe.api-base=http://127.0.0.1:" + str(server.server_port)],
                 cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT)
             url = erp if module == "erp-simulator" else glue

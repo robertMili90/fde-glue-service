@@ -376,3 +376,57 @@ Executed verification:
   projection and effect counts remained 4/2/2, and the demo was left running.
 - Python compilation, CodeGraph synchronization/current-index status and
   `git diff --check` passed. No real Stripe or Docker check was required or run.
+
+## Demo in the normal applications — 2026-10-27
+
+This supersedes the separate-port launcher workflow above. The user clarified
+that normal IDE/JAR application startup on 8080/8081 must populate the same
+databases used by those applications. Both now default to the demo profile.
+ERP adds missing fixtures atomically and preserves existing invoices and edits.
+Glue manages the read-only provider fixture within its own JVM, still using the
+official Stripe SDK/HTTP adapter, and queues ordinary durable work and scans.
+Explicit sandbox/test profiles exclude default demo components; Maven selects
+test for its independently controlled fixture suite. Swagger signing/current
+response examples apply automatically in demo mode.
+
+The Python Swagger launcher is optional and now uses normal ports/storage with
+no external provider or HTTP seeding process. Its check mode starts ordinary
+JARs without a profile argument, reverses startup order, and exercises every
+endpoint plus restart/edit/reset/requeue behavior. README, Compose, example
+environment and Swagger descriptions now agree on the normal startup workflow.
+
+On the actual existing ERP database, startup exposed a persisted FAIL_BEFORE_WRITE
+fault that prevented fixture initialization. Seed projections now retain the
+normal idempotency/version/financial checks while bypassing synthetic request
+fault injection. A regression test verifies initialization neither consumes nor
+clears the fault: the next ordinary projection still fails once, then retries
+successfully. Existing database files were backed up before startup. The existing
+Postman invoice remains; the normal ERP now contains five invoices (four samples
+plus that existing invoice), not a replacement/empty database. Final executable
+checks and handoff state follow.
+
+
+Verification completed:
+
+- `./mvnw -B -ntp spotless:apply` and `./mvnw -B -ntp verify`: success;
+  77 tests (12 ERP, 65 glue), no failures/errors/skips, style gates passed.
+- `python3 scripts/swagger-demo.py --check`: passed every documented endpoint,
+  automatic normal startup, reverse startup order, signed webhook/deduplication,
+  both JVM restarts, operator-edit preservation and reset/requeue recovery.
+- `python3 scripts/demo-offline.py`: passed; 10-invoice burst in 10.295 seconds,
+  first missing webhook, late refund and persisted retry after actual JVM restart;
+  final invoice/projection/update counts 11/11/12.
+- Python compilation, `docker compose config --quiet`, CodeGraph sync/current
+  status and `git diff --check`: passed. No real Stripe or Docker-container test.
+- Actual normal application JARs were restarted without profile, port or data
+  flags on 8080/8081 using the existing file databases. The same five invoices,
+  three projections and three financial updates survived. New sample work is
+  DONE / DONE / NEEDS_REVIEW / WAITING_PROVIDER. Initial ERP outages recovered
+  within the normal retry budget without manual requeue. Old Postman invoice,
+  failed work and attempt history remain. The former separate demo instances
+  are stopped. After the user reported H2 error 90020 during IDE startup, the
+  two agent-started normal JARs were also gracefully stopped. Verified both
+  database files released and ports 8080/8081 free; data is retained for IDE use.
+- The Air browser rendered the updated normal-startup Swagger introduction.
+  Browser click actions did not expand the endpoint, so no UI Execute result is
+  claimed; executable packaged HTTP checks passed as recorded above.

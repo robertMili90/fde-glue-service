@@ -1,6 +1,8 @@
 server:
   port: ${ERP_PORT:8081}
 spring:
+  profiles:
+    default: demo
   application:
     name: erp-simulator
   datasource:

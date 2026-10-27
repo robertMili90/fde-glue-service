@@ -9,7 +9,7 @@ info:
     means USD 12.00. The API writes ERP facts and never charges or refunds Stripe.
 
     **ERP-only walkthrough (no Stripe credentials needed)**
-    The persistent offline demo (`python3 scripts/swagger-demo.py`) prepopulates inv_demo
+    Normal local startup on 8081 uses the default demo profile and prepopulates inv_demo
     linked to pi_demo, plus refunded, unpaid and review fixtures. Its first Paid write is
     already recorded with demo-paid-v1, so the default PUT is a successful idempotent replay.
     GET endpoints use those existing IDs. POST /invoices uses separate inv_create / pi_create
@@ -25,12 +25,14 @@ info:
        the latest invoice ETag (normally `"2"`). The invoice becomes REFUNDED.
 
     Expand an endpoint and select **Try it out** to execute its examples. No local API
-    authentication is configured. The persistent demo uses a read-only local Stripe fixture.
+    authentication is configured. The default local demo uses a read-only local Stripe fixture.
     Outside that demo, run the synthetic-reference walkthrough with glue stopped or against a
     separate ERP database. For real sandbox synchronization, use a real Stripe test
     PaymentIntent and link it before confirming it. Manual ERP updates never change Stripe
     facts; reconciliation may hold a resulting mismatch for review. Demo fault
     controls affect projection writes; /demo/reset deletes this simulator's local data.
+    Restart ERP to restore missing demo fixtures. Existing records/edits remain unchanged.
+    Use the explicit sandbox profile for real Stripe test resources.
     Health and metrics are available separately under /actuator.
   version: "0.1.0"
 tags:
@@ -67,7 +69,7 @@ paths:
       parameters:
         - name: "invoiceId"
           in: "path"
-          description: "Existing ERP invoice ID; inv_demo is prepopulated by the persistent demo. Otherwise create it first."
+          description: "Existing ERP invoice ID; inv_demo is prepopulated by the default local demo. Otherwise create it first."
           required: true
           schema:
             type: "string"
@@ -313,7 +315,7 @@ paths:
         amounts are positive integral minor units (1200 USD = USD 12.00).
         A duplicate invoice ID or payment association returns 409, even with identical input.
         For synchronization, create a real Stripe test PaymentIntent, link it here before
-        confirming it, and run both applications. The persistent offline demo provides pi_create
+        confirming it, and run both applications. The default local demo provides pi_create
         in its local provider fixture; this synthetic ID cannot be fetched from real Stripe. Save the returned ETag for updates.
       requestBody:
         content:
@@ -483,7 +485,7 @@ paths:
       parameters:
         - name: "invoiceId"
           in: "path"
-          description: "Existing ERP invoice ID; inv_demo is prepopulated by the persistent demo. Otherwise create it first."
+          description: "Existing ERP invoice ID; inv_demo is prepopulated by the default local demo. Otherwise create it first."
           required: true
           schema:
             type: "string"

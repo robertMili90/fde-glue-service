@@ -1,0 +1,7 @@
+# Normal local startup is an offline demo. Set SPRING_PROFILES_ACTIVE=sandbox for real Stripe test access.
+stripe:
+  secret-key: sk_test_offline_demo
+  webhook-secret: whsec_offline_demo
+springdoc:
+  cache:
+    disabled: true

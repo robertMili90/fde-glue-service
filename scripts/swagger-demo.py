@@ -1,30 +1,24 @@
 #!/usr/bin/env python3
-"""Start a persistent, prepopulated Swagger demo, or verify it in isolated databases."""
+"""Run the normal applications on 8080/8081, or check their automatic demo startup."""
 import argparse
 import fcntl
 import hashlib
 import hmac
 import json
+import os
 from pathlib import Path
 import signal
 import socket
 import subprocess
 import tempfile
-import threading
 import time
-from http.server import ThreadingHTTPServer
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from stripe_stub import PAYMENTS, SECRET, Payment, StripeStub
+from stripe_stub import SECRET
 
 ROOT = Path(__file__).resolve().parents[1]
-FIXTURES = {
-    "inv_demo": ("pi_demo", 1200, Payment()),
-    "inv_refunded": ("pi_refunded", 1200, Payment(refunded=True)),
-    "inv_unpaid": ("pi_unpaid", 1200, Payment(status="requires_payment_method")),
-    "inv_review": ("pi_review", 1300, Payment()),
-}
+PAYMENT_IDS = ("pi_demo", "pi_refunded", "pi_review", "pi_unpaid")
 
 
 def request(base, path, method="GET", body=None, headers=None, expected=(200,)):
@@ -77,11 +71,6 @@ class Demo:
                 # Match Tomcat's reuse behavior so TIME_WAIT does not reject an immediate restart.
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 sock.bind(("127.0.0.1", port))
-        PAYMENTS.clear()
-        PAYMENTS.update({payment: facts for payment, _, facts in FIXTURES.values()})
-        PAYMENTS["pi_create"] = Payment()
-        self.stripe = ThreadingHTTPServer(("127.0.0.1", 0), StripeStub)
-        threading.Thread(target=self.stripe.serve_forever, daemon=True).start()
 
     def start(self, module):
         jar = ROOT / module / "target" / f"{module}-0.1.0-SNAPSHOT-exec.jar"
@@ -89,14 +78,16 @@ class Demo:
         database.parent.mkdir(parents=True, exist_ok=True)
         log = open(self.directory / (module + ".log"), "a+")
         self.logs[module] = log
-        arguments = ["java", "-jar", str(jar), "--spring.profiles.active=swagger-demo",
+        # No active-profile flag, fixture API, or external Stripe process: exercise normal startup.
+        arguments = ["java", "-jar", str(jar),
                      "--server.address=127.0.0.1", f"--server.port={self.ports[module]}",
                      f"--spring.datasource.url=jdbc:h2:file:{database};DB_CLOSE_ON_EXIT=FALSE",
-                     f"--stripe.api-base=http://127.0.0.1:{self.stripe.server_port}",
-                     "--stripe.secret-key=sk_test_offline_demo", f"--stripe.webhook-secret={SECRET}",
-                     f"--erp.base-url={self.erp}", "--sync.enabled=true",
-                     "--sync.reconciliation-initial-ms=3600000"]
-        self.processes[module] = subprocess.Popen(arguments, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
+                     f"--erp.base-url={self.erp}", "--sync.enabled=true"]
+        env = os.environ.copy()
+        for name in ("SPRING_PROFILES_ACTIVE", "SPRING_PROFILES_DEFAULT", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"):
+            env.pop(name, None)
+        self.processes[module] = subprocess.Popen(arguments, cwd=ROOT, env=env,
+                                                  stdout=log, stderr=subprocess.STDOUT)
         base = self.erp if module == "erp-simulator" else self.glue
 
         def healthy():
@@ -122,36 +113,22 @@ class Demo:
     def close(self):
         for module in list(self.processes):
             self.stop(module)
-        self.stripe.shutdown()
-        self.stripe.server_close()
 
-    def seed(self):
-        """Add missing fixtures through public APIs; preserve existing invoice facts and history."""
-        restored_payments = []
-        for invoice_id, (payment_id, amount, _) in FIXTURES.items():
-            invoice, _, status = request(self.erp, "/invoices/" + invoice_id, expected=(200, 404))
-            if status == 404:
-                restored_payments.append(payment_id)
-                invoice = request(self.erp, "/invoices", "POST", {
-                    "id": invoice_id, "paymentIntentId": payment_id,
-                    "expectedAmountMinor": amount, "currency": "USD"}, expected=(201,))[0]
-            if (invoice["paymentIntentId"], invoice["expectedAmountMinor"], invoice["currency"]) != (payment_id, amount, "USD"):
-                raise RuntimeError(f"Existing {invoice_id} differs from the fixture; no data was overwritten")
-            if invoice_id == "inv_demo" and invoice["financialStatus"] in ("UNPAID", "PAID"):
-                request(self.erp, "/invoices/inv_demo/payment-projection", "PUT", {
-                    "paymentIntentId": "pi_demo", "currency": "USD", "amountCollectedMinor": 1200,
-                    "amountRefundedMinor": 0, "status": "PAID"},
-                    {"Idempotency-Key": "demo-paid-v1", "If-Match": f'"{invoice["version"]}"'})
+    def wait_until_ready(self):
+        wait_for(lambda: all(request(self.erp, "/invoices/" + invoice)[2] == 200
+                             for invoice in ("inv_demo", "inv_refunded", "inv_review", "inv_unpaid")),
+                 "automatic ERP fixture creation")
+        wait_for(lambda: all(request(self.glue, "/operations/work/" + payment)[0]["totalAttempts"] > 0
+                             and request(self.glue, "/operations/work/" + payment)[0]["state"] not in ("READY", "RUNNING", "RETRY_SCHEDULED")
+                             for payment in PAYMENT_IDS), "automatic fixture processing")
+        runs = request(self.glue, "/operations/reconciliations")[0]
+        return runs[0]["id"]
+
+    def reconcile(self):
         run = request(self.glue, "/operations/reconciliations", "POST", expected=(202,))[0]
         wait_for(lambda: request(self.glue, "/operations/reconciliations/" + run["id"])[0]["state"] == "COMPLETE",
                  "fixture reconciliation")
-        # A reset removes only ERP data. Release held work only for invoices just restored;
-        # existing invoices with operator edits retain their review state.
-        for payment_id in restored_payments:
-            request(self.glue, "/operations/work/" + payment_id + "/requeue", "POST", expected=(202,))
-        wait_for(lambda: all(request(self.glue, "/operations/work/" + payment)[0]["totalAttempts"] > 0
-                             and request(self.glue, "/operations/work/" + payment)[0]["state"] not in ("READY", "RUNNING")
-                             for payment, _, _ in FIXTURES.values()), "fixture processing")
+        self.wait_until_ready()
         return run["id"]
 
 
@@ -188,7 +165,7 @@ def verify(demo):
     assert request(demo.erp, "/invoices/inv_refunded")[0]["financialStatus"] == "REFUNDED"
     initial = request(demo.erp, "/demo/state")[0]
     assert initial == {"invoiceCount": 4, "paymentProjectionCount": 2, "appliedUpdateCount": 2}
-    demo.seed()
+    demo.reconcile()
     assert request(demo.erp, "/demo/state")[0] == initial
 
     # The bundled browser signer must be served only in the explicit demo profile.
@@ -207,7 +184,7 @@ def verify(demo):
     create = example(erp, "/invoices", "post", "Linked USD invoice")
     request(demo.erp, "/invoices", "POST", create, expected=(201,))
     request(demo.erp, "/invoices", "POST", create, expected=(409,))
-    demo.seed()
+    demo.reconcile()
     wait_for(lambda: request(demo.glue, "/operations/work/pi_create")[0]["state"] == "DONE",
              "created invoice convergence before restart assertions")
     projection_path = "/invoices/inv_demo/payment-projection"
@@ -227,7 +204,7 @@ def verify(demo):
         demo.start(module)
     assert request(demo.erp, "/invoices/inv_demo")[0]["financialStatus"] == "REFUNDED"
     assert request(demo.erp, "/demo/state")[0] == counts
-    demo.seed()
+    demo.reconcile()
     assert request(demo.erp, "/invoices/inv_demo")[0]["financialStatus"] == "REFUNDED"
     assert request(demo.glue, "/operations/work/pi_demo")[0]["state"] == "NEEDS_REVIEW"
     assert request(demo.erp, "/demo/state")[0] == counts
@@ -238,16 +215,20 @@ def verify(demo):
     request(demo.erp, "/demo/faults", "POST", {"mode": "NONE"}, expected=(204,))
     request(demo.erp, "/demo/reset", "POST", expected=(204,))
     assert request(demo.erp, "/demo/state")[0]["invoiceCount"] == 0
-    demo.seed()
+    demo.stop("erp-simulator")
+    demo.start("erp-simulator")
+    # Reset deliberately preserves glue holds; after fixing/recreating ERP facts, explicitly requeue.
+    request(demo.glue, "/operations/work/pi_demo/requeue", "POST", expected=(202,))
+    demo.reconcile()
     assert request(demo.erp, "/demo/state")[0] == initial
     print("PASS: every documented endpoint, signature/deduplication, reseeding, file restart, edit preservation and reset recovery", flush=True)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--glue-port", type=int, default=18080)
-    parser.add_argument("--erp-port", type=int, default=18081)
-    parser.add_argument("--data-dir", type=Path, default=ROOT / "data" / "swagger-demo")
+    parser.add_argument("--glue-port", type=int, default=8080)
+    parser.add_argument("--erp-port", type=int, default=8081)
+    parser.add_argument("--data-dir", type=Path, default=ROOT / "data")
     parser.add_argument("--check", action="store_true", help="Verify all endpoints in temporary databases and exit")
     args = parser.parse_args()
     if args.glue_port == args.erp_port:
@@ -264,9 +245,14 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         demo = Demo(directory, free_port() if args.check else args.glue_port,
                     free_port() if args.check else args.erp_port)
-        demo.start("erp-simulator")
-        demo.start("glue-service")
-        run_id = demo.seed()
+        if args.check:
+            # Glue starts first to exercise startup ordering/retries against an initially absent ERP.
+            demo.start("glue-service")
+            demo.start("erp-simulator")
+        else:
+            demo.start("erp-simulator")
+            demo.start("glue-service")
+        run_id = demo.wait_until_ready()
         if args.check:
             verify(demo)
         else:

@@ -46,7 +46,7 @@ injection. Services own the short multi-repository transactions; repository gate
 queries retain pessimistic locking, and assigned IDs retain insert semantics.
 The [persistence follow-up](docs/refactoring-review.md#spring-data-repository-follow-up)
 records these choices and their regression evidence. Latest Maven verification
-passed 73 tests. The [testing report](docs/testing-report.md) records the suite
+passed 77 tests. The [testing report](docs/testing-report.md) records the suite
 inventory, measured coverage (90.57% lines; 74.50% branches), reproduction commands
 and verification limits. Previous packaged-demo evidence, including retry recovery
 across a JVM restart, is recorded in the milestone log.
@@ -57,22 +57,17 @@ separate temporary data directories and a local Stripe stub. It exercises a
 across an actual glue JVM restart. It reports measured elapsed time and removes
 its own processes/data afterwards. It never creates real Stripe resources.
 
-## Persistent Swagger demo with valid IDs
+## Demo during normal application startup
 
-After building, start a complete local demo without Stripe credentials:
+Start the two applications as shown below, directly from Java, Maven or your IDE.
+With no active profile configured they use the default `demo` profile, normal
+ports **8080 / 8081**, and their normal databases under `data/glue-service` and
+`data/erp-simulator`. No seeding command or separate demo instance is required.
 
-```sh
-python3 scripts/swagger-demo.py
-```
-
-Leave the command running and open [glue Swagger](http://localhost:18080/swagger-ui.html)
-and [ERP Swagger](http://localhost:18081/swagger-ui.html). Both databases are
-prepopulated before the command prints “Seeded demo ready”. They live under
-`data/swagger-demo`, separately from the normal applications on ports 8080/8081.
-Ctrl-C stops the demo's own processes; running the command again reuses these
-files, adds missing fixtures and preserves existing invoice edits and history.
-Occupied ports cause startup to fail without touching another application.
-Override ports or storage with `--glue-port`, `--erp-port` and `--data-dir`.
+The ERP adds these four fixtures during startup. Existing invoices and financial
+edits are preserved, so a previously used database can contain more than four
+invoices. A conflicting fixture identity fails startup without overwriting data;
+all new seed writes roll back together.
 
 | Invoice | Local payment | Initial invoice / work state |
 | --- | --- | --- |
@@ -81,35 +76,47 @@ Override ports or storage with `--glue-port`, `--erp-port` and `--data-dir`.
 | inv_unpaid | pi_unpaid | UNPAID / WAITING_PROVIDER |
 | inv_review | pi_review | UNPAID / NEEDS_REVIEW, amount mismatch |
 
-The runner seeds via the public ERP APIs and reconciliation, so work and attempts
-are produced by the ordinary pipeline. The read-only Stripe HTTP fixture serves
-these synthetic payments and `pi_create`; unknown IDs return 404. The demo uses
-only synthetic credentials and never contacts real Stripe. Its explicit
-`swagger-demo` profile enables a Swagger request hook that signs webhook bodies
-with a public synthetic key. This hook is absent during ordinary application
-startup; the profile rejects other credentials or a remote provider URL.
+Open [glue Swagger](http://localhost:8080/swagger-ui.html) and
+[ERP Swagger](http://localhost:8081/swagger-ui.html). `GET /invoices` lists all
+invoices; `GET /invoices/{invoiceId}` returns one. Glue queues ordinary durable
+work and reconciliation at startup; work/attempt results appear as the worker
+processes those requests. Start ERP first for the quickest demonstration. A
+brief reverse startup order is handled by the ordinary persisted retry policy.
 
-Try GET endpoints immediately: their IDs exist, and the reconciliation parameter
-uses a run ID from the current database. Glue read-response examples also use
-current work, attempts and run records, including their real IDs. The default Paid PUT replays the seeded
-`demo-paid-v1` operation successfully with its original quoted `"1"` header.
-The Refunded PUT needs a new key and the invoice's latest ETag as described in
-Swagger. Manual ERP edits do not change provider facts, so later reconciliation
-can correctly hold a conflict for review. Creation reserves `inv_create` /
-`pi_create`: the first POST succeeds; repeats return the documented 409.
-Fault examples intentionally affect subsequent writes. Reset intentionally
-empties the ERP; restart this command to restore missing fixtures. Error response
-examples illustrate failures; they are not additional successful requests.
+The local Stripe fixture is managed inside the glue JVM, listening only on an
+internal loopback port. The real SDK/HTTP adapter reads its synthetic test-mode
+resources; unknown payment IDs return 404. It never contacts real Stripe or
+creates financial resources. The demo profile enables the Swagger body-signing
+hook with a public synthetic key; it rejects other credentials or a remote
+provider. Use the explicit `sandbox` profile for real Stripe test access, as
+described below. Maven tests select `test` automatically and control their own
+fixtures; demo startup is covered separately by dedicated tests.
 
-Run the packaged demo's endpoint, reseeding and restart checks with:
+The default Paid PUT replays the seeded `demo-paid-v1` operation with the original
+quoted `"1"` header. Refund writes need a new key and the latest invoice ETag.
+Manual ERP edits do not change provider facts; later reconciliation can hold a
+conflict for review. Creation reserves `inv_create` / `pi_create`: the first POST
+returns 201; repeats return 409. Fault controls intentionally affect later writes.
+Reset intentionally empties ERP; restarting ERP restores missing fixtures. Glue
+operator holds survive reset/restart and need explicit requeue after the cause
+is fixed. Error response examples describe failures, not successful operations.
+
+The optional `python3 scripts/swagger-demo.py` convenience launcher starts these
+same applications on 8080/8081 using the same normal database locations. It fails
+if those ports are already occupied and never replaces a running application.
+No Python process is needed when starting the two Java applications yourself.
+
+Run the packaged startup/Swagger/restart check with:
 
 ```sh
 python3 scripts/swagger-demo.py --check
 ```
 
-This check uses temporary ports/databases, exercises every documented endpoint,
-verifies signature rejection/deduplication and edit preservation across both JVM
-restarts, then verifies reset/reseeding and removes its own data and processes.
+It starts ordinary application JARs without a profile argument or external Stripe
+server, using temporary ports/databases. It checks reverse startup ordering,
+every documented endpoint, automatic data population, signature rejection and
+deduplication, file persistence across both JVM restarts, operator-edit
+preservation and reset/restart/requeue recovery, then cleans up its own resources.
 
 ## Run the applications
 
@@ -155,9 +162,10 @@ Health: [glue](http://localhost:8080/actuator/health) and
 Both Swagger pages include a walkthrough, endpoint usage, parameter/header guidance,
 and named request/response examples, including errors and empty results. Expand an
 endpoint and select **Try it out**; select a named example for paid/refunded writes
-or fault modes. The ERP walkthrough works without Stripe credentials. For webhooks,
-replace the sample IDs and compute a fresh signature over the exact request body;
-the displayed signature header is a placeholder. Bodyless operations explicitly say
+or fault modes. Default local startup prepares the example IDs and signs webhook
+requests automatically. In the explicit sandbox profile, use actual Stripe test
+IDs and compute a fresh signature over the exact request body; its displayed
+signature header is a placeholder. Bodyless operations explicitly say
 to send no body, and 204 responses are empty. HTTP tests execute the generated ERP
 and webhook examples and check the documents against representative responses.
 Swagger documentation is maintained outside the controllers in
@@ -182,7 +190,11 @@ run with glue stopped or a separate ERP database.
 
 ## Optional Stripe sandbox workflow
 
-Configure `STRIPE_SECRET_KEY` from a local test/sandbox environment. Only `sk_test_`
+Set `SPRING_PROFILES_ACTIVE=sandbox` for both applications to disable automatic
+demo seeding, the local provider fixture and automatic Swagger signing. Use fresh
+`GLUE_DATA_DIR` / `ERP_DATA_DIR` locations for a sandbox session so synthetic demo
+references are not sent to the real provider. Configure `STRIPE_SECRET_KEY` from
+a local test/sandbox environment. Only `sk_test_`
 or `rk_test_` keys are accepted; restricted keys need read permissions for runtime
 and additional fixture permissions if used with the fixture tool. Keep secrets
 in your local environment. Neither tests nor this repository require their values.

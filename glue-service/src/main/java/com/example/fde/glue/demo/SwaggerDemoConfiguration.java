@@ -22,7 +22,7 @@ import org.springdoc.core.providers.ObjectMapperProvider;
 import org.springdoc.webmvc.ui.SwaggerIndexPageTransformer;
 import org.springdoc.webmvc.ui.SwaggerIndexTransformer;
 import org.springdoc.webmvc.ui.SwaggerWelcomeCommon;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
@@ -33,10 +33,10 @@ import org.springframework.web.servlet.resource.ResourceTransformerChain;
 import org.springframework.web.servlet.resource.TransformedResource;
 
 @Configuration(proxyBeanMethods = false)
-@Profile("swagger-demo")
+@Profile({"demo", "swagger-demo"})
 class SwaggerDemoConfiguration {
   SwaggerDemoConfiguration(
-      StripeProperties credentials, @Value("${stripe.api-base}") URI stripeApiBase) {
+      StripeProperties credentials, @Qualifier("stripeApiBase") URI stripeApiBase) {
     // This profile exposes only a public, synthetic signing key in Swagger's browser code.
     if (!"sk_test_offline_demo".equals(credentials.secretKey())
         || !"whsec_offline_demo".equals(credentials.webhookSecret())

@@ -15,11 +15,12 @@ import com.stripe.net.HttpURLConnectionClient;
 import com.stripe.net.StripeRequest;
 import com.stripe.net.StripeResponse;
 import com.stripe.param.RefundListParams;
+import java.net.URI;
 import java.time.Clock;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -48,7 +49,7 @@ public class StripeReader {
       StripeProperties credentials,
       SyncSettings settings,
       Clock clock,
-      @Value("${stripe.api-base:https://api.stripe.com}") String apiBase) {
+      @Qualifier("stripeApiBase") URI apiBase) {
     this.clock = clock;
     String secretKey = credentials.secretKey();
     if (secretKey == null || secretKey.isEmpty()) {
@@ -57,7 +58,7 @@ public class StripeReader {
       client =
           StripeClient.builder()
               .setApiKey(secretKey)
-              .setApiBase(apiBase)
+              .setApiBase(apiBase.toString())
               .setMaxNetworkRetries(0)
               .setHttpClient(transport)
               .setConnectTimeout(settings.httpTimeoutMs())

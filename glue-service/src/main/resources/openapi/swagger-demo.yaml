@@ -1,6 +1,6 @@
 info:
   description: |-
-    **Ready-to-run offline demo — persistent seeded databases, no Stripe account needed.**
+    **Local demo at normal startup — ports 8080/8081, persistent seeded databases, no Stripe account needed.**
 
     | ERP invoice | Local PaymentIntent | Initial result |
     | --- | --- | --- |
@@ -19,7 +19,7 @@ info:
     create Stripe payments or refunds. Work and attempts come from the real synchronization
     pipeline using a read-only local Stripe fixture.
 
-    ERP Swagger is on the companion demo ERP port (18081 by default). Its default Paid
+    ERP Swagger is on the companion application port (8081 by default). Its default Paid
     projection request is an idempotent replay of the seeded operation. POST /invoices
     reserves inv_create / pi_create for a new invoice, so its first request returns 201;
     repeating it returns the documented 409. Refund writes require a new idempotency key
@@ -27,8 +27,9 @@ info:
     reconciliation can correctly hold a conflict for review.
 
     Fault controls deliberately change later write behavior. POST /demo/reset deliberately
-    empties the ERP; restart the demo command to restore missing fixtures. Restart preserves
-    existing records and edits. Error response examples describe expected failures, not
+    empties the ERP; restart the ERP application to restore missing fixtures. Restart preserves
+    existing records and edits. Glue operator holds remain until explicitly requeued after
+    their cause is fixed. Error response examples describe expected failures, not
     additional successful requests. These synthetic IDs exist only in this offline demo.
 paths:
   /webhooks/stripe:

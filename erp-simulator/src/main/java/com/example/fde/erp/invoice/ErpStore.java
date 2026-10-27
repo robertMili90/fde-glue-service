@@ -13,6 +13,11 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @Transactional
 public class ErpStore {
+  private enum ProjectionMode {
+    REQUEST,
+    DEMO_SEED
+  }
+
   private enum Reason {
     BUSINESS_IDENTITY_CONFLICT,
     INVOICE_NOT_FOUND,
@@ -75,6 +80,21 @@ public class ErpStore {
 
   public InvoiceResult project(
       String invoiceId, String operationKey, long expectedVersion, PaymentProjection projection) {
+    return project(invoiceId, operationKey, expectedVersion, projection, ProjectionMode.REQUEST);
+  }
+
+  public InvoiceResult seedDemoProjection(
+      String invoiceId, String operationKey, long expectedVersion, PaymentProjection projection) {
+    // Startup fixture initialization must not consume persisted faults reserved for API requests.
+    return project(invoiceId, operationKey, expectedVersion, projection, ProjectionMode.DEMO_SEED);
+  }
+
+  private InvoiceResult project(
+      String invoiceId,
+      String operationKey,
+      long expectedVersion,
+      PaymentProjection projection,
+      ProjectionMode mode) {
     controls.lockMutations();
     String payload = encode(List.of(invoiceId, projection));
     IdempotencyResult existing = idempotencyResults.findById(operationKey).orElse(null);
@@ -90,7 +110,10 @@ public class ErpStore {
     }
     // Replay resolves first: neither a replay nor changed-payload conflict
     // consumes synthetic faults or evaluates a stale expected version.
-    FaultEffect fault = controls.consumeFault();
+    FaultEffect fault =
+        mode == ProjectionMode.REQUEST
+            ? controls.consumeFault()
+            : new FaultEffect(FaultMode.NONE, 0);
     if (fault.mode() == FaultMode.FAIL_BEFORE_WRITE) {
       return problem(503, Reason.TEMPORARY_FAILURE);
     }

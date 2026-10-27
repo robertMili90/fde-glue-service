@@ -459,3 +459,70 @@ packaged Swagger endpoint/restart check and the offline synchronization demo.
 No application code changed during publication, so those suites were not rerun.
 Checked the final diff and excluded ignored local databases, logs and credentials
 from the commit. Push completion is reported after the remote operation succeeds.
+
+## Normal application startup demo — 2026-10-27
+
+The user clarified that the demo data must be present during ordinary application
+startup on 8080/8081, not in a separately launched instance on 18080/18081. Codex
+read the design/scenarios, ERP contract, application configuration, seeding and
+provider/reconciliation call paths; CodeGraph status/exploration supplemented
+source reads. Applied the fde-implement-slice workflow.
+
+Changed the default Spring profile to demo in both applications. ERP seeds only
+missing fixtures in one short DB transaction and preserves existing invoice
+identity/facts; a conflict rolls back the new seeds. Glue manages a loopback-only
+read-only provider fixture within its own JVM, and the existing Stripe SDK/HTTP
+adapter reads it. Startup queues ordinary durable work/reconciliation without
+releasing operator holds. Existing Swagger signing/snapshot behavior also applies
+to this profile. Explicit sandbox/test profiles exclude these demo components.
+Maven selects test for the existing independently controlled fixtures; new
+startup tests explicitly select demo. The packaged check now starts the normal
+JARs with no profile argument and no Python seeding/provider process.
+
+Updated README, Swagger resources, Compose and example environment configuration
+to use the normal applications/ports/databases and explain preserved existing
+records, sandbox selection, reset and explicit hold requeue. No sub-agents or
+new dependencies were used. Executable results and runtime handoff follow.
+
+The existing normal ERP database exposed a persisted FAIL_BEFORE_WRITE setting:
+fixture creation initially rolled back and startup stopped. Codex corrected the
+seed path to bypass only synthetic request faults while retaining the same
+financial/version/idempotency checks. A new regression test proves the fault
+remains for the next normal projection request; seed initialization succeeds
+without clearing or consuming it. The ordinary project path is unchanged.
+The user database was backed up first, and the earlier separate demo processes
+were stopped. Normal ERP startup now preserves the prior Postman invoice and
+adds the four missing fixtures, for five invoices total. Glue observations that
+failed while ERP was unavailable recovered within the ordinary retry budget;
+no operator requeue or history reset was needed. The pre-existing Postman work
+remains held with its original failure instead of being silently released.
+
+
+Final verification: `./mvnw -B -ntp spotless:apply` and `./mvnw -B -ntp verify`
+passed, with 77 tests (ERP 12, glue 65), no failures/errors/skips and all pinned
+format/import/braces gates. `python3 scripts/swagger-demo.py --check` passed
+against the final packaged applications, including reverse startup order,
+all documented HTTP endpoints, signatures/deduplication, persistence across both
+JVM restarts, edit preservation and reset/restart/requeue recovery. The offline
+burst/recovery demo also passed: 10 invoices in 10.295 seconds, first missing
+webhook, late refund and retry after process restart, with final 11/11/12 counts.
+Python compilation and `docker compose config --quiet` passed; no Docker
+containers or real Stripe resources were used. CodeGraph sync/status reports a
+current index, and `git diff --check` passed.
+
+Started both normal JARs with no profile/port/data arguments, then stopped and
+restarted only those two processes on the same existing databases. HTTP checks
+confirmed the same 5 invoices, 3 projections and 3 financial updates. The four
+sample work states are DONE, DONE, NEEDS_REVIEW and WAITING_PROVIDER; the prior
+Postman invoice and failed work remain preserved. Only 8080/8081 application
+listeners remain; the old separate demo instances were stopped. Air browser
+navigation/readback confirmed the rendered Swagger introduction describes normal
+startup and shows the valid sample IDs. Air click actions did not expand the
+operation, so no browser Execute success is claimed; the endpoint/signing HTTP
+checks above provide executable verification. These two normal applications were
+left running after verification, which subsequently blocked the user's IDE
+startup with H2 error 90020. Codex confirmed process commands and log descriptors,
+gracefully stopped only those two agent-started JARs, and verified both database
+files released and ports 8080/8081 free. Data was retained; applications are now
+stopped so the user can own their IDE startup. The user previously authorized
+push to main; publication of this correction follows final diff review.
